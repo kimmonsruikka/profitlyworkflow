@@ -1,0 +1,54 @@
+name: test
+
+on:
+  push:
+    branches: ["**"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: trading-intelligence-system
+
+    env:
+      ENVIRONMENT: development
+      BROKER_MODE: paper
+      DATABASE_URL: sqlite:///./test.db
+      REDIS_URL: redis://localhost:6379/0
+      ALPACA_API_KEY: ""
+      ALPACA_SECRET_KEY: ""
+      POLYGON_API_KEY: ""
+      BENZINGA_API_KEY: ""
+      ORTEX_API_KEY: ""
+      SEC_API_KEY: ""
+      TELEGRAM_BOT_TOKEN: ""
+      TELEGRAM_CHAT_ID: ""
+      TELEGRAM_MONITOR_API_ID: ""
+      TELEGRAM_MONITOR_API_HASH: ""
+      REDDIT_CLIENT_ID: ""
+      REDDIT_CLIENT_SECRET: ""
+      REDDIT_USER_AGENT: ""
+      X_API_BEARER_TOKEN: ""
+      STOCKTWITS_ACCESS_TOKEN: ""
+      PREFECT_API_KEY: ""
+      PREFECT_API_URL: ""
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: trading-intelligence-system/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run unit tests
+        env:
+          PYTHONPATH: .
+        run: pytest tests/unit/ -v
