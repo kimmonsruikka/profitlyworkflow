@@ -97,6 +97,30 @@ PDT_MAX_DAY_TRADES = 3
 PDT_ROLLING_DAYS = 5
 
 # ---------------------------------------------------------------------------
+# EDGAR / SEC INGESTION
+# ---------------------------------------------------------------------------
+EDGAR_RSS_URL = "https://www.sec.gov/cgi-bin/browse-edgar"
+EDGAR_COMPANY_TICKERS_EXCHANGE_URL = "https://www.sec.gov/files/company_tickers_exchange.json"
+EDGAR_POLL_INTERVAL_MINUTES = 5
+EDGAR_POLL_HOUR_START_ET = 4    # 04:00 ET — pre-market window opens
+EDGAR_POLL_HOUR_END_ET = 20     # 20:00 ET — after-hours window closes
+EDGAR_HTTP_TIMEOUT_SECONDS = 15
+EDGAR_HTTP_RETRY = 3
+EDGAR_RSS_FETCH_COUNT = 100     # max items per poll, per form type
+
+# Universe seeding stays wider than the tradeable float cap so we keep
+# borderline companies in view if they cross the threshold later.
+EDGAR_UNIVERSE_FLOAT_MAX = 15_000_000
+EDGAR_UNIVERSE_TARGET_SIZE = 1000
+EDGAR_SMALL_EXCHANGES = ("OTC", "Pink", "OTCBB", "NYSE MKT", "NYSE American")
+
+# Forms to monitor on every poll, ordered by priority.
+EDGAR_PRIORITY_FORMS = ("8-K", "S-1", "S-3", "4")
+# Items 8.01 (other events) and 2.02 (results of operations) are the
+# catalyst-relevant slots inside an 8-K.
+EDGAR_8K_PRIORITY_ITEMS = ("8.01", "2.02")
+
+# ---------------------------------------------------------------------------
 # EXPONENTIAL WEIGHTING (months)
 # ---------------------------------------------------------------------------
 WEIGHT_0_6_MONTHS = 3.0

@@ -12,6 +12,7 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";  -- gen_random_uuid()
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS tickers (
     ticker          VARCHAR(10) PRIMARY KEY,
+    cik             VARCHAR(20),
     company_name    TEXT,
     float_shares    BIGINT,
     exchange        VARCHAR(20),
@@ -20,6 +21,9 @@ CREATE TABLE IF NOT EXISTS tickers (
     active          BOOLEAN DEFAULT TRUE,
     notes           TEXT
 );
+
+CREATE INDEX IF NOT EXISTS idx_tickers_cik     ON tickers(cik);
+CREATE INDEX IF NOT EXISTS idx_tickers_active  ON tickers(active);
 
 -- ---------------------------------------------------------------------------
 -- promoter_entities
