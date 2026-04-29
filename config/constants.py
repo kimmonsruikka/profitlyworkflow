@@ -121,6 +121,16 @@ EDGAR_PRIORITY_FORMS = ("8-K", "S-1", "S-3", "4")
 EDGAR_8K_PRIORITY_ITEMS = ("8.01", "2.02")
 
 # ---------------------------------------------------------------------------
+# POLYGON.IO (rebranded as Massive.com Oct 2025; SDK + key unchanged)
+# ---------------------------------------------------------------------------
+# Starter plan = 5 req/min. Real-time tier (required before Phase 2)
+# is unlimited. The throttler reads this constant so a tier upgrade only
+# requires changing one number.
+POLYGON_REQUESTS_PER_MINUTE = 5
+POLYGON_HTTP_TIMEOUT_SECONDS = 30
+POLYGON_FLOAT_BATCH_PROGRESS_INTERVAL = 50  # report every N tickers in update_floats
+
+# ---------------------------------------------------------------------------
 # EXPONENTIAL WEIGHTING (months)
 # ---------------------------------------------------------------------------
 WEIGHT_0_6_MONTHS = 3.0
