@@ -235,6 +235,36 @@ Break-even on costs: ~16% annual return on $35,000 account. One good Strategy 2 
 
 ---
 
+## Data Stack Upgrades by Phase
+
+Note: [Polygon.io](http://Polygon.io) rebranded to [Massive.com](http://Massive.com) in October 2025. The API, Python client (polygon-api-client), and POLYGON_API_KEY env var are unchanged.
+
+### Current (Phase 1 — Building)
+| Item | Cost |
+|---|---|
+| [Polygon.io](http://Polygon.io) (now [Massive.com](http://Massive.com)) Stocks Starter — 15-min delayed | $29 |
+| Benzinga News | $0 (not yet active) |
+
+### Required Before Phase 2 (Live Signal Firing)
+Upgrade [Polygon.io](http://Polygon.io) to real-time tier and add Benzinga News BEFORE the first live Strategy 1 signal fires. 15-minute delayed data makes Strategy 1 unusable — entry timing depends on real-time VWAP and spread.
+
+| Item | Current | Upgrade To | Cost |
+|---|---|---|---|
+| [Polygon.io](http://Polygon.io) data tier | Starter $29/mo (15-min delay) | Real-time $199/mo | +$170/mo |
+| Benzinga News | Not active | Add-on via [Polygon.io](http://Polygon.io) | +$99/mo |
+| **Phase 2 total data cost** | **$29** | **$298/mo** | |
+
+Annual pricing available: [Polygon.io](http://Polygon.io) real-time at $160/month ($1,920/year) if paid annually. Only commit to annual after the system is proven profitable — not before.
+
+### Upgrade Checklist
+- [ ] Upgrade [Polygon.io](http://Polygon.io) to real-time tier before Phase 2
+- [ ] Add Benzinga News add-on via [Polygon.io](http://Polygon.io) dashboard
+- [ ] Update POLYGON_API_KEY in .env.production if key changes on plan upgrade
+- [ ] Add BENZINGA_API_KEY to .env.production
+- [ ] Add BENZINGA_API_KEY to GitHub repository secrets
+
+---
+
 ## Phase Rollout
 
 ### Phase 0 — Foundation *(Weeks 1–2)*
