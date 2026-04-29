@@ -9,6 +9,7 @@ both the sync alembic path and the async runtime path.
 
 from __future__ import annotations
 
+import ssl
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
@@ -25,9 +26,28 @@ from data.models import Base
 
 _PLACEHOLDER_URL = "postgresql+asyncpg://placeholder:placeholder@localhost/placeholder"
 
-# libpq sslmode values that mean "encrypt the connection"; asyncpg
-# represents these via ssl=True (with cert verification).
-_SSLMODE_TLS_VALUES = {"require", "verify-ca", "verify-full"}
+# sslmode values that mean "encrypt the connection but don't verify the
+# server's certificate" — equivalent to libpq sslmode=require. Used by
+# DigitalOcean Managed Postgres (self-signed CA) and similar setups.
+_SSLMODE_UNVERIFIED = {"require"}
+
+# sslmode values that mean "encrypt AND verify the server cert against the
+# system CA bundle" — these map to asyncpg's ssl=True (default-context).
+_SSLMODE_VERIFIED = {"verify-ca", "verify-full"}
+
+
+def _unverified_ssl_context() -> ssl.SSLContext:
+    """SSLContext that encrypts but doesn't verify the peer cert.
+
+    Equivalent to psycopg2's sslmode=require behavior. Required when
+    connecting to a Postgres instance with a self-signed CA (e.g. the
+    DigitalOcean Managed Postgres CA bundle isn't in the system trust
+    store).
+    """
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    return ctx
 
 
 def _to_async_url(url: str) -> str:
@@ -71,7 +91,9 @@ def _async_url_and_connect_args(url: str) -> tuple[str, dict]:
             kept.append((key, value))
 
     if sslmode is not None:
-        if sslmode in _SSLMODE_TLS_VALUES:
+        if sslmode in _SSLMODE_UNVERIFIED:
+            connect_args["ssl"] = _unverified_ssl_context()
+        elif sslmode in _SSLMODE_VERIFIED:
             connect_args["ssl"] = True
         elif sslmode == "disable":
             connect_args["ssl"] = False
