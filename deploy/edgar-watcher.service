@@ -1,0 +1,24 @@
+[Unit]
+Description=EDGAR RSS Watcher
+After=network.target redis-server.service
+PartOf=trading-stack.target
+
+[Service]
+Type=simple
+User=trading
+Group=trading
+WorkingDirectory=/app/profitlyworkflow
+EnvironmentFile=/app/profitlyworkflow/.env.production
+ExecStart=/app/profitlyworkflow/venv/bin/python -m ingestion.edgar.rss_watcher
+Restart=always
+RestartSec=30
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/app/profitlyworkflow
+
+[Install]
+WantedBy=multi-user.target

@@ -200,10 +200,11 @@ MSG
 
 
 # ---------------------------------------------------------------------------
-# Step 8 — Install systemd units (trading-app)
+# Step 8 — Install systemd units (trading-app, edgar-watcher)
 # ---------------------------------------------------------------------------
 step_8() {
-    banner "Step 8: install trading-app systemd unit"
+    banner "Step 8: install trading-app + edgar-watcher systemd units"
+
     cat >/etc/systemd/system/trading-app.service <<MSG
 [Unit]
 Description=Trading Intelligence System API
@@ -229,17 +230,36 @@ ReadWritePaths=$APP_DIR
 [Install]
 WantedBy=multi-user.target
 MSG
+
+    # edgar-watcher unit lives in the repo so deploys can update it.
+    if [[ -f "$APP_DIR/deploy/edgar-watcher.service" ]]; then
+        cp "$APP_DIR/deploy/edgar-watcher.service" /etc/systemd/system/edgar-watcher.service
+    else
+        echo "WARN: $APP_DIR/deploy/edgar-watcher.service not found — skipping" >&2
+    fi
+
     systemctl daemon-reload
     systemctl enable trading-app
     systemctl start trading-app
+    if [[ -f /etc/systemd/system/edgar-watcher.service ]]; then
+        systemctl enable edgar-watcher
+        systemctl start edgar-watcher
+    fi
     sleep 2
-    systemctl status trading-app --no-pager | head -20
+    systemctl status trading-app --no-pager | head -10
+    echo
+    systemctl status edgar-watcher --no-pager 2>/dev/null | head -10 || true
     cat <<MSG
 
 Expected output:
   - 'Active: active (running)' for trading-app.
-  - User=$APP_USER (NOT root).
-  - Listens on 127.0.0.1:8000 (verify with: ss -tlnp | grep 8000).
+  - 'Active: active (running)' for edgar-watcher (only after step 6 + .env.production are done).
+  - User=$APP_USER on both (NOT root).
+  - trading-app listens on 127.0.0.1:8000 (verify: ss -tlnp | grep 8000).
+
+Note: edgar-watcher will log warnings until you run the universe seed
+(scripts/seed_edgar_universe.py — ships in the next PR) and set
+SEC_USER_AGENT in .env.production.
 MSG
 }
 
@@ -360,7 +380,7 @@ Steps:
   5   clone the repo as 'trading'
   6   create venv + pip install (then STOP and create .env.production manually)
   7   run alembic migrations
-  8   install + start trading-app systemd unit (uvicorn on 127.0.0.1:8000)
+  8   install + start trading-app and edgar-watcher systemd units
   9   curl localhost /health
   10  install caddy + reverse-proxy <DOMAIN>:443 -> 127.0.0.1:8000
         DOMAIN=trading.example.com $0 10
