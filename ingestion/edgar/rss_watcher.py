@@ -31,6 +31,7 @@ from config import constants
 from config.settings import settings
 from data.db import get_session
 from data.models.sec_filing import SecFiling
+from data.models.ticker import Ticker
 from flows.celery_app import celery_app
 from ingestion.edgar.cik_universe import _normalize_cik, load_universe_ciks
 
@@ -142,12 +143,31 @@ async def _existing_accessions(
     return {a for a in rows if a}
 
 
+async def _ticker_for_ciks(
+    session: AsyncSession, ciks: Iterable[str]
+) -> dict[str, str]:
+    """Batch resolve CIKs to ticker symbols via the tickers table.
+
+    Returns a mapping {cik: ticker}. CIKs without a tickers-table row are
+    omitted from the result; callers should fall back to None.
+    """
+    cik_list = [c for c in {c for c in ciks if c}]
+    if not cik_list:
+        return {}
+    stmt = select(Ticker.cik, Ticker.ticker).where(Ticker.cik.in_(cik_list))
+    rows = (await session.execute(stmt)).all()
+    return {cik: ticker for cik, ticker in rows if cik and ticker}
+
+
 async def persist_and_queue(session: AsyncSession, filings: list[dict]) -> int:
     """Insert new filings and enqueue Celery tasks. Returns count enqueued."""
     if not filings:
         return 0
     seen = await _existing_accessions(
         session, (f["accession_number"] for f in filings if f.get("accession_number"))
+    )
+    cik_to_ticker = await _ticker_for_ciks(
+        session, (f["cik"] for f in filings if f.get("cik"))
     )
 
     queued = 0
@@ -158,11 +178,19 @@ async def persist_and_queue(session: AsyncSession, filings: list[dict]) -> int:
         if f.get("filed_at") is None or f.get("form_type") is None:
             continue
 
+        cik = f.get("cik")
+        ticker = cik_to_ticker.get(cik) if cik else None
+        if cik and ticker is None:
+            logger.debug(
+                "no ticker for cik={cik} on filing {acc} ({form}) — storing NULL",
+                cik=cik, acc=acc, form=f.get("form_type"),
+            )
+
         stmt = (
             pg_insert(SecFiling)
             .values(
-                ticker=None,  # resolved by downstream task from CIK
-                cik=f["cik"],
+                ticker=ticker,
+                cik=cik,
                 filed_at=f["filed_at"],
                 form_type=f["form_type"],
                 accession_number=acc,
