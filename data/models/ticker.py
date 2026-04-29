@@ -14,6 +14,7 @@ class Ticker(Base):
     cik: Mapped[str | None] = mapped_column(String(20), index=True)
     company_name: Mapped[str | None] = mapped_column(Text)
     float_shares: Mapped[int | None] = mapped_column(BigInteger)
+    shares_outstanding: Mapped[int | None] = mapped_column(BigInteger)
     exchange: Mapped[str | None] = mapped_column(String(20))
     sector: Mapped[str | None] = mapped_column(String(100))
     first_seen: Mapped[datetime] = mapped_column(

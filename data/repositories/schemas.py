@@ -23,6 +23,7 @@ class TickerSchema(_Schema):
     cik: str | None = None
     company_name: str | None = None
     float_shares: int | None = None
+    shares_outstanding: int | None = None
     exchange: str | None = None
     sector: str | None = None
     first_seen: datetime | None = None
