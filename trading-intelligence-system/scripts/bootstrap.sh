@@ -44,14 +44,14 @@ step_1() {
     banner "Step 1: apt update + upgrade"
     apt-get update
     DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
-    cat <<EOF
+    cat <<MSG
 
 Expected output:
   - 'Reading package lists... Done'
   - upgrade summary: '0 upgraded, 0 newly installed' on a fresh droplet,
     or a list of upgraded packages on a stale one.
   - no errors.
-EOF
+MSG
 }
 
 
@@ -66,13 +66,13 @@ step_2() {
         debian-keyring debian-archive-keyring apt-transport-https
     systemctl enable redis-server
     systemctl start redis-server
-    cat <<EOF
+    cat <<MSG
 
 Expected output:
   - apt installs all listed packages without error.
   - 'redis-server' systemd service is enabled and active.
   - 'redis-cli ping' returns PONG (verify with: redis-cli ping).
-EOF
+MSG
 }
 
 
@@ -88,13 +88,13 @@ step_3() {
     ufw allow 443/tcp comment 'https (caddy)'
     yes | ufw enable
     ufw status verbose
-    cat <<EOF
+    cat <<MSG
 
 Expected output:
   - 'Status: active'
   - rules show 22, 80, 443 ALLOW IN; default DENY incoming.
   - port 8000 NOT in the allow list — application is loopback-only.
-EOF
+MSG
 }
 
 
@@ -109,12 +109,12 @@ step_4() {
         useradd --system --create-home --shell /bin/bash "$APP_USER"
     fi
     install -d -o "$APP_USER" -g "$APP_USER" -m 0755 /app
-    cat <<EOF
+    cat <<MSG
 
 Expected output:
   - 'id $APP_USER' returns a uid/gid (verify with: id $APP_USER).
   - /app exists and is owned by $APP_USER (verify with: ls -ld /app).
-EOF
+MSG
 }
 
 
@@ -130,12 +130,12 @@ step_5() {
         sudo -u "$APP_USER" git clone "$REPO_URL" "$APP_DIR"
     fi
     sudo -u "$APP_USER" git -C "$APP_DIR" rev-parse HEAD
-    cat <<EOF
+    cat <<MSG
 
 Expected output:
   - clone completes without error.
   - HEAD SHA printed at the end matches what you expect on main.
-EOF
+MSG
 }
 
 
@@ -147,7 +147,7 @@ step_6() {
     sudo -u "$APP_USER" $PYTHON_BIN -m venv "$APP_DIR/venv"
     sudo -u "$APP_USER" "$APP_DIR/venv/bin/pip" install --upgrade pip
     sudo -u "$APP_USER" "$APP_DIR/venv/bin/pip" install -r "$APP_DIR/requirements.txt"
-    cat <<EOF
+    cat <<MSG
 
 Expected output:
   - venv created at $APP_DIR/venv/ owned by $APP_USER.
@@ -163,7 +163,7 @@ The file must:
   - exist at $APP_DIR/.env.production
   - be owned by $APP_USER and chmod 600
   - contain DATABASE_URL pointing to the Managed PostgreSQL instance.
-EOF
+MSG
 }
 
 
@@ -184,7 +184,7 @@ step_7() {
         cd '$APP_DIR'
         ./venv/bin/alembic upgrade head
     "
-    cat <<EOF
+    cat <<MSG
 
 Expected output:
   - 'Running upgrade  -> 0001, initial schema'
@@ -195,7 +195,7 @@ After this completes, the 11 tables exist:
   tickers, promoter_entities, promoter_campaigns, promoter_network_edges,
   sec_filings, signals, trades, positions, account_state, price_data,
   gate_decisions
-EOF
+MSG
 }
 
 
@@ -204,7 +204,7 @@ EOF
 # ---------------------------------------------------------------------------
 step_8() {
     banner "Step 8: install trading-app systemd unit"
-    cat >/etc/systemd/system/trading-app.service <<EOF
+    cat >/etc/systemd/system/trading-app.service <<MSG
 [Unit]
 Description=Trading Intelligence System API
 After=network.target redis-server.service
@@ -228,19 +228,19 @@ ReadWritePaths=$APP_DIR
 
 [Install]
 WantedBy=multi-user.target
-EOF
+MSG
     systemctl daemon-reload
     systemctl enable trading-app
     systemctl start trading-app
     sleep 2
     systemctl status trading-app --no-pager | head -20
-    cat <<EOF
+    cat <<MSG
 
 Expected output:
   - 'Active: active (running)' for trading-app.
   - User=$APP_USER (NOT root).
   - Listens on 127.0.0.1:8000 (verify with: ss -tlnp | grep 8000).
-EOF
+MSG
 }
 
 
@@ -252,11 +252,11 @@ step_9() {
     sleep 2
     curl -fsS http://127.0.0.1:8000/health
     echo
-    cat <<EOF
+    cat <<MSG
 
 Expected output:
   {"status":"ok","environment":"production","broker_mode":"paper","timestamp":"..."}
-EOF
+MSG
 }
 
 
@@ -282,21 +282,21 @@ step_10() {
         apt-get install -y caddy
     fi
 
-    cat >/etc/caddy/Caddyfile <<EOF
+    cat >/etc/caddy/Caddyfile <<MSG
 $DOMAIN {
     encode gzip
     reverse_proxy 127.0.0.1:8000
 }
-EOF
+MSG
     systemctl reload caddy || systemctl restart caddy
     systemctl status caddy --no-pager | head -10
-    cat <<EOF
+    cat <<MSG
 
 Expected output:
   - 'Active: active (running)' for caddy.
   - Caddy obtains a Let's Encrypt cert for $DOMAIN automatically (may take 30-60s).
   - 'curl https://$DOMAIN/health' returns the same JSON as step 9.
-EOF
+MSG
 }
 
 
@@ -320,14 +320,14 @@ step_11() {
     echo
     echo "Active services:"
     systemctl is-active redis-server trading-app caddy
-    cat <<EOF
+    cat <<MSG
 
 Expected output:
   - loopback /health returns the JSON.
   - port 8000 not reachable from outside (good).
   - https://$DOMAIN/health (if DOMAIN set) returns the same JSON over TLS.
   - all three services report 'active'.
-EOF
+MSG
 }
 
 
@@ -349,7 +349,7 @@ case "${1:-}" in
     10) step_10 ;;
     11) step_11 ;;
     *)
-        cat <<EOF
+        cat <<MSG
 Usage: $0 <step-number>
 
 Steps:
@@ -365,7 +365,7 @@ Steps:
   10  install caddy + reverse-proxy <DOMAIN>:443 -> 127.0.0.1:8000
         DOMAIN=trading.example.com $0 10
   11  end-to-end verification
-EOF
+MSG
         exit 1
         ;;
 esac
