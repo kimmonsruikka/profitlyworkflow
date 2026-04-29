@@ -1,4 +1,4 @@
-"""Repository pattern data-access layer."""
+"""Async repository pattern data access."""
 
 from data.repositories.price_repo import PriceRepository
 from data.repositories.promoter_repo import PromoterRepository

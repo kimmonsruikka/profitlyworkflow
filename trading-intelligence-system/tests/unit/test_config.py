@@ -84,13 +84,20 @@ def test_positive_constants_are_positive() -> None:
 
 
 def test_allocation_budget_is_consistent() -> None:
-    """Cash buffer + max swing exposure + a single max position must fit within 100%."""
-    total = (
-        constants.CASH_BUFFER_MIN
-        + constants.S2_MAX_EXPOSURE_PCT
-        + 0.20
-    )
+    """Cash buffer + total combined exposure cap must fit within 100% of the account.
+
+    COMBINED_EXPOSURE_MAX is the actual ceiling enforced by the gatekeeper across
+    S1 + S2 + any single position; the per-strategy and per-position caps live
+    inside it, so summing them separately would double-count.
+    """
+    total = constants.CASH_BUFFER_MIN + constants.COMBINED_EXPOSURE_MAX
     assert total <= 1.0, (
         f"CASH_BUFFER_MIN ({constants.CASH_BUFFER_MIN}) + "
-        f"S2_MAX_EXPOSURE_PCT ({constants.S2_MAX_EXPOSURE_PCT}) + 0.20 = {total} > 1.0"
+        f"COMBINED_EXPOSURE_MAX ({constants.COMBINED_EXPOSURE_MAX}) = {total} > 1.0"
+    )
+    assert constants.S2_MAX_EXPOSURE_PCT <= constants.COMBINED_EXPOSURE_MAX, (
+        "S2 cap must not exceed the combined cap"
+    )
+    assert constants.MAX_POSITION_PCT <= constants.COMBINED_EXPOSURE_MAX, (
+        "single-position cap must not exceed the combined cap"
     )
