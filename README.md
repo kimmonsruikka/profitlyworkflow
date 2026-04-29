@@ -239,14 +239,16 @@ Break-even on costs: ~16% annual return on $35,000 account. One good Strategy 2 
 
 ### Phase 0 — Foundation *(Weeks 1–2)*
 > **Question to answer:** Is the infrastructure solid before any real data flows through it?
+>
+> **Status:** infrastructure scaffold complete. Repo lives at `/app/profitlyworkflow` on the droplet (root-flattened, not `/app/trading-intelligence-system`). FastAPI health endpoint live behind systemd as the `trading` user, bound to `127.0.0.1:8000`. Postgres + TimescaleDB schema migrated. Redis up. Pending in this phase: Prefect Cloud + Celery wiring, EDGAR/Polygon/Benzinga pipelines, Telegram bot, and the operational items (Uptime Robot, backup-restore drill).
 
 #### Infrastructure Setup
-- [ ] Provision DigitalOcean Droplet (NYC, 4GB/2vCPU)
-- [ ] Provision DigitalOcean Managed PostgreSQL
-- [ ] Install and configure TimescaleDB extension
-- [ ] Install and configure Redis
-- [ ] Configure SSH keys and firewall rules
-- [ ] Install Python 3.12, virtual environment
+- [x] Provision DigitalOcean Droplet (NYC, 4GB/2vCPU)
+- [x] Provision DigitalOcean Managed PostgreSQL
+- [x] Install and configure TimescaleDB extension
+- [x] Install and configure Redis
+- [x] Configure SSH keys and firewall rules
+- [x] Install Python 3.12, virtual environment
 - [ ] Configure Uptime Robot monitoring (alert if unreachable >5 mins)
 - [ ] Set up automated daily PostgreSQL backup
 - [ ] Verify backup restore works
@@ -259,24 +261,24 @@ Break-even on costs: ~16% annual return on $35,000 account. One good Strategy 2 
 - [ ] Test task: Celery worker processes async task, result stored in Redis
 
 #### Repository Scaffold
-- [ ] Create GitHub repository (private)
-- [ ] Build full directory structure per spec
-- [ ] Create `.env.example` with all required environment variables
-- [ ] Create `requirements.txt` with all initial packages
-- [ ] Create `docker-compose.yml` for local PostgreSQL + Redis
-- [ ] Configure `.gitignore` (Python, .env, __pycache__, secrets)
-- [ ] Set up GitHub Actions: `test.yml` (run on push)
-- [ ] Set up GitHub Actions: `deploy.yml` (deploy to DO on merge to main)
-- [ ] Add DO_HOST, DO_USER, DO_SSH_KEY to GitHub Secrets
+- [x] Create GitHub repository (private)
+- [x] Build full directory structure per spec
+- [x] Create `.env.example` with all required environment variables
+- [x] Create `requirements.txt` with all initial packages
+- [x] Create `docker-compose.yml` for local PostgreSQL + Redis
+- [x] Configure `.gitignore` (Python, .env, __pycache__, secrets)
+- [x] Set up GitHub Actions: `test.yml` (run on push)
+- [x] Set up GitHub Actions: `deploy.yml` (deploy to DO on merge to main)
+- [x] Add DO_HOST, DO_USER, DO_SSH_KEY to GitHub Secrets
 
 #### Database Schema
-- [ ] Write complete `schema.sql` with all tables and indexes
-- [ ] Create SQLAlchemy models for all tables
-- [ ] Configure Alembic for migrations
-- [ ] Run initial migration against Managed PostgreSQL
-- [ ] Create TimescaleDB hypertable for `price_data`
-- [ ] Write `[constants.py](http://constants.py)` with all thresholds and parameters (no magic numbers)
-- [ ] Write `[settings.py](http://settings.py)` loading all config from environment variables
+- [x] Write complete `schema.sql` with all tables and indexes
+- [x] Create SQLAlchemy models for all tables
+- [x] Configure Alembic for migrations
+- [x] Run initial migration against Managed PostgreSQL
+- [x] Create TimescaleDB hypertable for `price_data`
+- [x] Write `[constants.py](http://constants.py)` with all thresholds and parameters (no magic numbers)
+- [x] Write `[settings.py](http://settings.py)` loading all config from environment variables
 
 #### Data Pipeline Foundations
 - [ ] EDGAR RSS polling (5-minute interval, weekdays 4am–8pm ET)
@@ -302,7 +304,7 @@ Break-even on costs: ~16% annual return on $35,000 account. One good Strategy 2 
 - [ ] Test: let alert expire, verify SIGNAL_EXPIRED routes to paper trade
 
 #### Phase 0 Verification Gate
-- [ ] All tables created and indexed in production database
+- [x] All tables created and indexed in production database
 - [ ] EDGAR pipeline running and storing data
 - [ ] Polygon feed connected and logging to TimescaleDB
 - [ ] Benzinga feed connected and logging
@@ -311,7 +313,7 @@ Break-even on costs: ~16% annual return on $35,000 account. One good Strategy 2 
 - [ ] Redis state reads and writes verified
 - [ ] Uptime Robot alert tested (manually stopped droplet, alert fired)
 - [ ] Daily backup confirmed and restore tested
-- [ ] All GitHub Actions passing on push
+- [x] All GitHub Actions passing on push
 
 ---
 
