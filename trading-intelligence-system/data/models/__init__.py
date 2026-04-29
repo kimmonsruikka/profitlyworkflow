@@ -2,6 +2,7 @@
 
 from data.models.account_state import AccountState
 from data.models.base import Base
+from data.models.gate_decision import GateDecision
 from data.models.position import Position
 from data.models.price_data import PriceData
 from data.models.promoter_campaign import PromoterCampaign
@@ -15,6 +16,7 @@ from data.models.trade import Trade
 __all__ = [
     "AccountState",
     "Base",
+    "GateDecision",
     "Position",
     "PriceData",
     "PromoterCampaign",

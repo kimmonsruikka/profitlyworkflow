@@ -240,3 +240,18 @@ CREATE INDEX IF NOT EXISTS idx_trades_signal_id                  ON trades(signa
 CREATE INDEX IF NOT EXISTS idx_positions_status_strategy         ON positions(status, strategy);
 CREATE INDEX IF NOT EXISTS idx_positions_ticker                  ON positions(ticker);
 CREATE INDEX IF NOT EXISTS idx_positions_signal_id               ON positions(signal_id);
+
+-- ---------------------------------------------------------------------------
+-- gate_decisions — every risk gatekeeper decision, append-only audit log
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS gate_decisions (
+    decision_id     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    signal_id       UUID REFERENCES signals(signal_id),
+    rule_triggered  VARCHAR(64) NOT NULL,
+    approved        BOOLEAN NOT NULL,
+    message         VARCHAR(500),
+    timestamp       TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_gate_decisions_signal       ON gate_decisions(signal_id);
+CREATE INDEX IF NOT EXISTS idx_gate_decisions_timestamp    ON gate_decisions(timestamp);
