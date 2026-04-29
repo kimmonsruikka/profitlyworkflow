@@ -1,21 +1,39 @@
 from __future__ import annotations
 
+import ssl
+
 from data.db import _async_url_and_connect_args
 
 
-def test_postgresql_with_sslmode_require_converts_to_ssl_true() -> None:
-    """libpq's sslmode=require → asyncpg's ssl=True; query param removed."""
+def _assert_unverified_ssl_context(value) -> None:
+    """sslmode=require → encrypted but not verified (DO Managed-style)."""
+    assert isinstance(value, ssl.SSLContext)
+    assert value.check_hostname is False
+    assert value.verify_mode == ssl.CERT_NONE
+
+
+def test_postgresql_with_sslmode_require_uses_unverified_ssl_context() -> None:
+    """libpq's sslmode=require → asyncpg ssl=<unverified context>."""
     url = "postgresql://user:pw@host:5432/db?sslmode=require"
     result, args = _async_url_and_connect_args(url)
     assert result.startswith("postgresql+asyncpg://")
     assert "sslmode" not in result
-    assert args == {"ssl": True}
+    assert set(args.keys()) == {"ssl"}
+    _assert_unverified_ssl_context(args["ssl"])
 
 
-def test_postgresql_with_verify_full_also_maps_to_ssl_true() -> None:
+def test_postgresql_with_verify_full_keeps_default_verification() -> None:
+    """sslmode=verify-full keeps cert verification on (asyncpg ssl=True)."""
     url = "postgresql://u:p@host/db?sslmode=verify-full"
     result, args = _async_url_and_connect_args(url)
     assert "sslmode" not in result
+    assert args == {"ssl": True}
+
+
+def test_postgresql_with_verify_ca_keeps_default_verification() -> None:
+    """sslmode=verify-ca also maps to asyncpg ssl=True (verified)."""
+    url = "postgresql://u:p@host/db?sslmode=verify-ca"
+    _, args = _async_url_and_connect_args(url)
     assert args == {"ssl": True}
 
 
@@ -32,13 +50,14 @@ def test_postgresql_without_sslmode_returns_empty_connect_args() -> None:
     assert args == {}
 
 
-def test_other_query_params_are_preserved() -> None:
+def test_other_query_params_are_preserved_with_unverified_ssl() -> None:
     """sslmode goes; other libpq params (if any) survive the rewrite."""
     url = "postgresql://u:p@host/db?application_name=watcher&sslmode=require"
     result, args = _async_url_and_connect_args(url)
     assert "application_name=watcher" in result
     assert "sslmode" not in result
-    assert args == {"ssl": True}
+    assert set(args.keys()) == {"ssl"}
+    _assert_unverified_ssl_context(args["ssl"])
 
 
 def test_already_asyncpg_url_with_sslmode_still_normalized() -> None:
@@ -46,7 +65,8 @@ def test_already_asyncpg_url_with_sslmode_still_normalized() -> None:
     url = "postgresql+asyncpg://u:p@host/db?sslmode=require"
     result, args = _async_url_and_connect_args(url)
     assert "sslmode" not in result
-    assert args == {"ssl": True}
+    assert set(args.keys()) == {"ssl"}
+    _assert_unverified_ssl_context(args["ssl"])
 
 
 def test_sqlite_url_translates_to_aiosqlite_no_ssl() -> None:
