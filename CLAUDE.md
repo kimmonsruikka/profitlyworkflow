@@ -41,3 +41,7 @@ The codebase is organized in thin layers: ingestion (EDGAR, Polygon, Benzinga, s
 ## Current Phase
 
 **Phase 0 — Foundation build.** No live trading. No real API connections required yet. Focus is on infrastructure soundness: schema, repositories, gatekeeper, broker abstraction, paper engine, CI/CD, health endpoint. Phase 1 begins the promoter knowledge base build and the signal engine; Phase 2 adds reduced-size live trading via Alpaca; Phase 3 expands to both strategies on IBKR. See the phased checklist in `README.md`.
+
+## Data Tier Upgrade Before Phase 2
+
+Data tier upgrade required before Phase 2: [Polygon.io](http://Polygon.io) real-time ($199/mo) + Benzinga News ($99/mo). Current Starter plan ($29/mo) is 15-min delayed — unusable for live Strategy 1 signal execution. Note: [Polygon.io](http://Polygon.io) rebranded to [Massive.com](http://Massive.com) in October 2025; the API, polygon-api-client package, and POLYGON_API_KEY env var are unchanged. See "Data Stack Upgrades by Phase" in README.md for the full checklist.
