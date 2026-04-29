@@ -104,7 +104,7 @@ FEEDBACK ENGINE
 
 | Layer | Technology | Purpose |
 |---|---|---|
-| Language | Python 3.11+ | Core runtime |
+| Language | Python 3.12+ | Core runtime |
 | Orchestration | Prefect Cloud | Workflow scheduling and monitoring |
 | Task Queue | Celery + Redis | Async parallel processing |
 | Database | PostgreSQL + TimescaleDB | Persistent storage + time-series |
@@ -246,7 +246,7 @@ Break-even on costs: ~16% annual return on $35,000 account. One good Strategy 2 
 - [ ] Install and configure TimescaleDB extension
 - [ ] Install and configure Redis
 - [ ] Configure SSH keys and firewall rules
-- [ ] Install Python 3.11, virtual environment
+- [ ] Install Python 3.12, virtual environment
 - [ ] Configure Uptime Robot monitoring (alert if unreachable >5 mins)
 - [ ] Set up automated daily PostgreSQL backup
 - [ ] Verify backup restore works

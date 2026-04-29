@@ -20,7 +20,7 @@ set -euo pipefail
 APP_USER="trading"
 APP_DIR="/app/profitlyworkflow"
 REPO_URL="https://github.com/kimmonsruikka/profitlyworkflow.git"
-PYTHON_BIN="python3.11"
+PYTHON_BIN="python3.12"
 
 require_root() {
     if [[ $EUID -ne 0 ]]; then
@@ -61,7 +61,7 @@ MSG
 step_2() {
     banner "Step 2: install python, git, redis, ufw, debian-keyring (for caddy)"
     DEBIAN_FRONTEND=noninteractive apt-get install -y \
-        python3.11 python3.11-venv python3-pip \
+        python3.12 python3.12-venv python3-pip \
         git curl ufw redis-server \
         debian-keyring debian-archive-keyring apt-transport-https
     systemctl enable redis-server
