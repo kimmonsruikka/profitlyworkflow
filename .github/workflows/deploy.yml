@@ -23,11 +23,11 @@ jobs:
             set -e
             cd /app/profitlyworkflow
             git pull origin main
-            pip install -r requirements.txt --quiet
-            alembic upgrade head
+            ./venv/bin/pip install -r requirements.txt --quiet
+            ./venv/bin/alembic upgrade head
             sudo systemctl restart trading-app
-            sudo systemctl restart celery-worker
-            sudo systemctl restart prefect-agent
+            sudo systemctl restart celery-worker || true
+            sudo systemctl restart prefect-agent || true
             sleep 5
             curl -f http://localhost:8000/health || exit 1
 
