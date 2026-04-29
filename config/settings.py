@@ -48,6 +48,10 @@ class Settings(BaseSettings):
 
     # SEC / EDGAR
     SEC_API_KEY: str = ""
+    # SEC requires a contact email in HTTP headers for direct EDGAR access.
+    # Format: "Company Name contact@example.com". See:
+    # https://www.sec.gov/os/accessing-edgar-data
+    SEC_USER_AGENT: str = ""
 
     # Telegram alert bot
     TELEGRAM_BOT_TOKEN: str = ""

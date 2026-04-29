@@ -20,6 +20,7 @@ class _Schema(BaseModel):
 
 class TickerSchema(_Schema):
     ticker: str
+    cik: str | None = None
     company_name: str | None = None
     float_shares: int | None = None
     exchange: str | None = None
