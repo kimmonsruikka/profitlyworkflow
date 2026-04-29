@@ -18,7 +18,7 @@
 set -euo pipefail
 
 APP_USER="trading"
-APP_DIR="/app/trading-intelligence-system"
+APP_DIR="/app/profitlyworkflow"
 REPO_URL="https://github.com/kimmonsruikka/profitlyworkflow.git"
 PYTHON_BIN="python3.11"
 

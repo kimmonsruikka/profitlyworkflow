@@ -499,7 +499,7 @@ Break-even on costs: ~16% annual return on $35,000 account. One good Strategy 2 
 ## Repository Structure
 
 ```
-trading-intelligence-system/
+profitlyworkflow/
 ├── .github/workflows/
 │   ├── test.yml
 │   └── deploy.yml

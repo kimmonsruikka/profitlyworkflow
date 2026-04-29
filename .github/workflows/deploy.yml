@@ -21,7 +21,7 @@ jobs:
           script_stop: true
           script: |
             set -e
-            cd /app/trading-intelligence-system
+            cd /app/profitlyworkflow
             git pull origin main
             pip install -r requirements.txt --quiet
             alembic upgrade head

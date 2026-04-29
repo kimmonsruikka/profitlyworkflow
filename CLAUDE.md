@@ -4,7 +4,7 @@
 
 This repository is a signal intelligence platform for catalyst-driven momentum trading on low-float equities. It runs **two strategies concurrently on shared infrastructure**: Strategy 1 reacts to confirmed catalysts intraday on a 15-minute to 1-day hold; Strategy 2 positions ahead of catalysts by reading the promotion infrastructure (IR firms, attorneys, transfer agents named in SEC filings) days before retail sees the move. The system finds and scores opportunities, sends a structured alert to Telegram with confidence / liquidity / promoter-network context, and the operator decides EXECUTE or PASS. Either way the outcome is captured (live trade, paper trade, or expired alert) and fed back into the model.
 
-The codebase is organized in thin layers: ingestion (EDGAR, Polygon, Benzinga, social) → intelligence (promoter graph, catalyst classifier, liquidity scorer, regime detector) → signals (S1 evaluator, S2 category detectors, unified confidence scorer) → risk gatekeeper → execution (broker abstraction, order manager, paper engine) → alerts (Telegram bot, briefs) → feedback (trade logger, learning loop, reports). All work lives in `trading-intelligence-system/`; CI/CD workflows live at the repo root in `.github/workflows/`.
+The codebase is organized in thin layers: ingestion (EDGAR, Polygon, Benzinga, social) → intelligence (promoter graph, catalyst classifier, liquidity scorer, regime detector) → signals (S1 evaluator, S2 category detectors, unified confidence scorer) → risk gatekeeper → execution (broker abstraction, order manager, paper engine) → alerts (Telegram bot, briefs) → feedback (trade logger, learning loop, reports). All project files live at the repo root; CI/CD workflows are in `.github/workflows/`.
 
 ## Critical Rules for Code Changes
 
@@ -17,11 +17,11 @@ The codebase is organized in thin layers: ingestion (EDGAR, Polygon, Benzinga, s
 
 ## Key Files to Understand First
 
-- `trading-intelligence-system/config/constants.py` — every threshold, percentage, time window, and parameter
-- `trading-intelligence-system/config/settings.py` — environment configuration, the `is_live_trading` safety gate, loguru setup
-- `trading-intelligence-system/risk/gatekeeper.py` — every order passes through `check_all()`; rule names live in `Rules`
-- `trading-intelligence-system/execution/broker/base.py` — the `BrokerClient` abstract interface contract
-- `trading-intelligence-system/data/schema/schema.sql` — source of truth for the data model (TimescaleDB hypertable on `price_data`)
+- `config/constants.py` — every threshold, percentage, time window, and parameter
+- `config/settings.py` — environment configuration, the `is_live_trading` safety gate, loguru setup
+- `risk/gatekeeper.py` — every order passes through `check_all()`; rule names live in `Rules`
+- `execution/broker/base.py` — the `BrokerClient` abstract interface contract
+- `data/schema/schema.sql` — source of truth for the data model (TimescaleDB hypertable on `price_data`)
 
 ## Database
 
