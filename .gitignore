@@ -34,7 +34,3 @@ logs/
 # IDE
 .vscode/
 .idea/
-
-# Alembic generated migrations (keep directory, ignore generated files)
-data/schema/migrations/versions/*
-!data/schema/migrations/versions/.gitkeep
