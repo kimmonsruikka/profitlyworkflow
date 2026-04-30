@@ -99,11 +99,17 @@ def classify_outcome(
     realized_return_pct: float | None,
     hit_target: bool | None,
     hit_stop: bool | None,
+    target_pct: float | None = None,
 ) -> str:
     """Apply OUTCOME_LABEL_RULES to derive WIN/LOSS/NEUTRAL/INVALID.
 
     INVALID: we couldn't compute a realized return AND neither flag is set —
     typically means no price data was available for the window.
+
+    Direction-aware: when `target_pct` is negative (e.g.
+    S2_DILUTION_RISK at -3%), the prediction is "price will fall" — the
+    signs of the WIN / LOSS thresholds flip. Default behavior (target_pct
+    unset or positive) treats the prediction as long.
     """
     rules = constants.OUTCOME_LABEL_RULES
     if realized_return_pct is None and hit_target is None and hit_stop is None:
@@ -114,6 +120,18 @@ def classify_outcome(
         return rules["label_loss"]
     if realized_return_pct is None:
         return rules["label_invalid"]
+
+    if target_pct is not None and target_pct < 0:
+        # Short prediction: realized must be sufficiently negative to win,
+        # sufficiently positive to lose. Use the same magnitudes from
+        # OUTCOME_LABEL_RULES, just flipped.
+        if realized_return_pct <= -rules["win_threshold_pct"]:
+            return rules["label_win"]
+        if realized_return_pct >= -rules["loss_threshold_pct"]:
+            return rules["label_loss"]
+        return rules["label_neutral"]
+
+    # Long-prediction (default) thresholds.
     if realized_return_pct >= rules["win_threshold_pct"]:
         return rules["label_win"]
     if realized_return_pct <= rules["loss_threshold_pct"]:
@@ -159,7 +177,14 @@ def compute_outcome_metrics(
     mae = (lowest - entry) / entry * 100.0
     realized = (exit_close - entry) / entry * 100.0
 
-    hit_target = None if target_pct is None else mfe >= target_pct
+    if target_pct is None:
+        hit_target: bool | None = None
+    elif target_pct >= 0:
+        # Long prediction: hit when MFE reaches the positive target.
+        hit_target = mfe >= target_pct
+    else:
+        # Short prediction: hit when MAE drops to the (negative) target.
+        hit_target = mae <= target_pct
     hit_stop = None if stop_pct is None else mae <= stop_pct  # stop is signed negative
 
     return {
@@ -259,6 +284,7 @@ async def resolve_one(
         realized_return_pct=metrics["realized_return_pct"],
         hit_target=metrics["hit_target"],
         hit_stop=metrics["hit_stop"],
+        target_pct=target,
     )
 
     payload = OutcomeCreate(

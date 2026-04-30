@@ -117,6 +117,21 @@ OUTCOME_LABEL_RULES = {
     "label_invalid": "INVALID",
 }
 
+# Default window + target_pct per signal_type. These are PLACEHOLDERS —
+# real values come from Phase 1 calibration once we have outcome data.
+# Negative target_pct means "expected DOWNWARD move" (S2_DILUTION_RISK
+# is the canonical example: an effective S-3 increases dilution risk so
+# we predict a price decline). The resolution flow's classify_outcome
+# infers direction from the sign of target_pct.
+#
+# Comment any change with the calibration data that justified it.
+SIGNAL_TYPE_DEFAULTS: dict[str, dict[str, float]] = {
+    "S1_CATALYST":       {"window_minutes": 60,         "target_pct": 5.0},
+    "S2_DILUTION_RISK":  {"window_minutes": 1440,       "target_pct": -3.0},
+    "S2_CATEGORY_A":     {"window_minutes": 7 * 1440,   "target_pct": 50.0},
+    "S2_CATEGORY_D":     {"window_minutes": 14 * 1440,  "target_pct": 30.0},
+}
+
 # ---------------------------------------------------------------------------
 # EDGAR / SEC INGESTION
 # ---------------------------------------------------------------------------

@@ -73,6 +73,10 @@ The codebase is organized in thin layers: ingestion (EDGAR, Polygon, Benzinga, s
 - **Price-data fetches go through `PolygonCachedPriceSource`.** Direct `polygon-api-client` calls outside `ingestion/market_data/` are prohibited — they bypass the TimescaleDB cache and the rate limiter, double-spend the Starter quota, and silently diverge from the data the resolution flow already saw.
 - **Outcomes with `label='INVALID'` MUST have a populated `invalid_reason`.** Use the named constants in `INVALID_REASONS` in `config/constants.py` — the repo's `OutcomesRepository.create()` enforces this at write time. No freeform reason strings.
 - **The resolution flow does not write outcomes on transient errors.** Network/5xx/unknown exceptions leave the prediction unresolved; the next flow run retries it. Only `PolygonNotFoundError`, `PolygonNoDataError`, or `is_complete=False` from the cached price source produce an `INVALID` outcome row.
+- **The Celery filing-processing task evaluates signals AFTER persisting the filing, never before.** The signal-eval path runs in a SEPARATE session from the filing update so an eval failure doesn't roll back the parsed-filing write. Filing persistence must succeed independent of signal evaluation; if you change this ordering you'll start losing filings on a noisy scorer.
+- **Signal evaluation is best-effort at the Celery boundary.** Exceptions inside `SignalEngine.evaluate_edgar_filing` propagate (so they're visible in operator logs), but the calling Celery task wraps the entire eval block in `try/except` and logs without raising. Don't catch exceptions inside `evaluate_edgar_filing` itself.
+- **Adding a new feature to `extract_edgar_features()` requires bumping `FEATURE_SCHEMA_VERSION` in `config/constants.py`.** Old predictions remain valid under their original schema; new predictions use the new version. The `FEATURE_KEYS_FV_V1` tuple in `signals/features/edgar_features.py` documents the contract — add to it AND bump the version together.
+- **`SIGNAL_TYPE_DEFAULTS` is a calibration target, not fixed truth.** Window/target values evolve as Phase 1 outcome data accumulates. Comment any change with the data that justified it; placeholders in this PR are explicitly so.
 
 ## Key Files to Understand First
 
@@ -82,8 +86,10 @@ The codebase is organized in thin layers: ingestion (EDGAR, Polygon, Benzinga, s
 - `execution/broker/base.py` — the `BrokerClient` abstract interface contract
 - `data/schema/schema.sql` — source of truth for the data model (TimescaleDB hypertable on `price_data`)
 - `signals/scoring/catalyst_scorer.py` — `CatalystScorer` abstract + `RulesV1Scorer` (Phase-1 in-production scorer)
-- `signals/engine.py` — `SignalEngine.evaluate()`; the chokepoint that writes the prediction row before any alert
-- `flows/outcome_resolution_flow.py` — outcome closer, hourly + 17:00 ET sweep; `PriceSource` Protocol injection point
+- `signals/engine.py` — `SignalEngine.evaluate()` + `evaluate_edgar_filing()`; the chokepoint that writes the prediction row before any alert
+- `signals/filters/edgar_prediction_filter.py` — `is_prediction_worthy(filing)` decides which EDGAR filings get scored; everything else is parsed and stored but skips the predictions table
+- `signals/features/edgar_features.py` — `extract_edgar_features(filing, ticker_metadata)`; `FEATURE_KEYS_FV_V1` is the schema contract that `FEATURE_SCHEMA_VERSION` pins
+- `flows/outcome_resolution_flow.py` — outcome closer, hourly + 17:00 ET sweep; `PriceSource` Protocol injection point; `classify_outcome` is direction-aware via the sign of `target_pct`
 - `data/repositories/predictions_repo.py` — prediction CRUD + `get_unresolved_matured()` query the resolver walks
 - `ingestion/market_data/polygon_price_source.py` — `PolygonCachedPriceSource`, the cache-merge logic, gap detection
 - `ingestion/market_data/polygon_client.py` — async wrapper around the polygon-api-client SDK; `get_aggregates()` is the entry the cached source uses
