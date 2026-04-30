@@ -24,16 +24,52 @@ jobs:
             cd /app/profitlyworkflow
             git pull origin main
             ./venv/bin/pip install -r requirements.txt --quiet
+
+            # Stop workers BEFORE the migration so they release pooled
+            # SQLAlchemy connections against the managed-Postgres cap.
+            # The migration competing with running services for the
+            # last few slots is what blew up the previous deploy.
+            # || true keeps the script alive if a unit isn't shipped yet
+            # (prefect-agent has no systemd unit).
+            sudo systemctl stop edgar-watcher || true
+            sudo systemctl stop celery-worker || true
+            sudo systemctl stop prefect-agent || true
+            sleep 10
+
+            # Connection-cap guardrail. Even with workers stopped, if
+            # something else is saturating the DB we don't want a
+            # half-applied migration. Abort hard rather than half-apply.
+            set -a
+            source /app/profitlyworkflow/.env.production
+            set +a
+            ACTIVE=$(psql "$DATABASE_URL" -tAc \
+                "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database();" \
+                | tr -d ' ')
+            MAX=$(psql "$DATABASE_URL" -tAc "SHOW max_connections;" | tr -d ' ')
+            THRESHOLD=$((MAX - 5))
+            echo "DB connections: active=$ACTIVE max=$MAX threshold=$THRESHOLD"
+            if [ "$ACTIVE" -gt "$THRESHOLD" ]; then
+                echo "ERROR: Connection cap saturated; refusing to run migration. Manual intervention required."
+                exit 1
+            fi
+
             ./venv/bin/alembic upgrade head
+
+            # Repo-managed systemd units ship via git push; copy them
+            # on every deploy so edits don't require manual scp.
             sudo cp deploy/edgar-watcher.service /etc/systemd/system/edgar-watcher.service
             sudo cp deploy/celery-worker.service /etc/systemd/system/celery-worker.service
             sudo systemctl daemon-reload
             sudo systemctl enable edgar-watcher
             sudo systemctl enable celery-worker
+
+            # Bring services back. trading-app first (briefly drops the
+            # health endpoint during reload), then the workers.
             sudo systemctl restart trading-app
-            sudo systemctl restart edgar-watcher
-            sudo systemctl restart celery-worker
+            sudo systemctl start edgar-watcher
+            sudo systemctl start celery-worker
             sudo systemctl restart prefect-agent || true
+
             sleep 5
             curl -f http://localhost:8000/health || exit 1
 

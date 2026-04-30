@@ -105,3 +105,23 @@ See **Current State** at the top for the live snapshot. Phase 0 (foundation) is 
 ## Data Tier Upgrade Before Phase 2
 
 Data tier upgrade required before Phase 2: [Polygon.io](http://Polygon.io) real-time ($199/mo) + Benzinga News ($99/mo). Current Starter plan ($29/mo) is 15-min delayed — unusable for live Strategy 1 signal execution. Note: [Polygon.io](http://Polygon.io) rebranded to [Massive.com](http://Massive.com) in October 2025; the API, polygon-api-client package, and POLYGON_API_KEY env var are unchanged. See "Data Stack Upgrades by Phase" in README.md for the full checklist.
+
+## Deployment Notes
+
+Managed Postgres connection cap is the binding constraint on deploys. Worker services (`edgar-watcher`, `celery-worker`, future `prefect-agent`) hold pooled SQLAlchemy connections that count against the cap. The deploy workflow stops worker services *before* running migrations and restarts them *after* — do not change this ordering without revisiting connection math.
+
+A connection-cap guardrail runs in the deploy workflow before alembic. It queries `pg_stat_activity` and aborts the deploy with a clear error if the active count is within 5 of `max_connections`. This prevents the half-applied migration scenario.
+
+If a deploy ever fails with `remaining connection slots are reserved for roles with the SUPERUSER attribute`:
+
+```bash
+ssh root@<droplet>
+sudo systemctl stop trading-app edgar-watcher celery-worker
+sleep 10
+cd /app/profitlyworkflow && sudo -u trading bash -c '
+    set -a; source .env.production; set +a
+    ./venv/bin/alembic upgrade head
+'
+sudo systemctl start trading-app edgar-watcher celery-worker
+curl http://localhost:8000/health
+```
