@@ -283,3 +283,61 @@ CREATE TABLE IF NOT EXISTS gate_decisions (
 
 CREATE INDEX IF NOT EXISTS idx_gate_decisions_signal       ON gate_decisions(signal_id);
 CREATE INDEX IF NOT EXISTS idx_gate_decisions_timestamp    ON gate_decisions(timestamp);
+
+-- ---------------------------------------------------------------------------
+-- LEARNING ARCHITECTURE
+-- model_versions / predictions / outcomes
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS model_versions (
+    version_id              VARCHAR(40) PRIMARY KEY,
+    model_class             VARCHAR(40) NOT NULL,
+    feature_schema_version  VARCHAR(20) NOT NULL,
+    trained_at              TIMESTAMPTZ,
+    training_set_size       INTEGER,
+    calibration_metrics     JSONB DEFAULT '{}'::jsonb,
+    in_production           BOOLEAN NOT NULL DEFAULT FALSE,
+    in_shadow               BOOLEAN NOT NULL DEFAULT FALSE,
+    artifact_path           TEXT,
+    notes                   TEXT
+);
+
+CREATE TABLE IF NOT EXISTS predictions (
+    prediction_id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    created_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    ticker                     VARCHAR(10) NOT NULL,
+    signal_type                VARCHAR(40) NOT NULL,
+    feature_vector             JSONB NOT NULL,
+    feature_schema_version     VARCHAR(20) NOT NULL,
+    scorer_version             VARCHAR(40) NOT NULL,
+    confidence                 NUMERIC(5,4) NOT NULL,
+    predicted_window_minutes   INTEGER NOT NULL,
+    predicted_target_pct       NUMERIC(6,3),
+    alert_sent                 BOOLEAN NOT NULL DEFAULT FALSE,
+    user_decision              VARCHAR(20),
+    decision_reason            TEXT,
+    trade_id                   UUID,
+    outcome_id                 UUID
+);
+
+CREATE INDEX IF NOT EXISTS idx_predictions_ticker_time
+    ON predictions(ticker, created_at);
+CREATE INDEX IF NOT EXISTS idx_predictions_unresolved
+    ON predictions(created_at) WHERE outcome_id IS NULL;
+
+CREATE TABLE IF NOT EXISTS outcomes (
+    outcome_id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    prediction_id                 UUID NOT NULL REFERENCES predictions(prediction_id),
+    resolved_at                   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    window_close_at               TIMESTAMPTZ NOT NULL,
+    max_favorable_excursion_pct   NUMERIC(6,3),
+    max_adverse_excursion_pct     NUMERIC(6,3),
+    realized_return_pct           NUMERIC(6,3),
+    paper_return_pct              NUMERIC(6,3),
+    hit_target                    BOOLEAN,
+    hit_stop                      BOOLEAN,
+    outcome_label                 VARCHAR(20) NOT NULL,
+    price_data_source             VARCHAR(40) NOT NULL,
+    UNIQUE (prediction_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_outcomes_label ON outcomes(outcome_label);

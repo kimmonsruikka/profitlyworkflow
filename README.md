@@ -51,15 +51,15 @@ The promoter knowledge base maps every IR firm, attorney, transfer agent, and au
 
 ```
 DATA LAYER
-├── EDGAR RSS Watcher          Real-time 8-K / S-1 / S-3 / Form 4 detection
+├── EDGAR RSS Watcher          Real-time 8-K / S-1 / S-3 / Form 4 / DEF 14A
 ├── [SEC-API.io](http://SEC-API.io) Parser          Structured extraction from raw filings
 ├── [Polygon.io](http://Polygon.io)                 Real-time and historical price / volume / quotes
 ├── Benzinga Pro API           Real-time news and catalyst feed
 ├── Ortex                      Short interest, days to cover, borrow rate
-├── StockTwits API             Social velocity monitoring
-├── X API                      Ticker mention velocity
-├── Telegram (Telethon)        Pump group monitoring
-└── Reddit (PRAW)              Async sentiment batch processing
+├── Telegram (Telethon)        Primary social signal — pump-group monitoring
+├── Reddit (PRAW)              Async sentiment batch — penny / WSB velocity
+└── FinBERT (local) +          Hybrid sentiment classification —
+    Claude Haiku API           cheap first-pass + rich second-pass
 
 INTELLIGENCE LAYER
 ├── Promoter Knowledge Base    Entity network graph, campaign history,
@@ -68,11 +68,23 @@ INTELLIGENCE LAYER
 ├── Liquidity Scorer           Real-time spread + depth + market maker analysis
 └── Market Regime Detector     HOT / NEUTRAL / COLD environment classification
 
+LEARNING ARCHITECTURE
+├── predictions table          One row per signal evaluation, immutable,
+│                              calibrated probability + feature_vector
+├── outcomes table             Closed-out maturities — MFE / MAE / realized
+│                              return / WIN/LOSS/NEUTRAL/INVALID label
+├── model_versions table       Catalog of every scorer; only one in_production
+│                              at a time, others run in_shadow
+└── Outcome Resolution Flow    Hourly + 17:00 ET sweep — closes matured
+                               predictions and writes outcome rows
+
 SIGNAL ENGINE
 ├── Strategy 1 Evaluator       Entry conditions, exit parameters, position sizing
 ├── Strategy 2 Evaluator       Category A/B/C/D setup detection and scoring
 ├── Risk Gatekeeper            Pre-order validation, PDT tracking, exposure limits
-└── Confidence Scorer          Unified signal confidence with historical calibration
+└── Catalyst Scorer            Phase 1: rules-v1 hand-coded; Phase 2+: GBDT
+                               (XGBoost / LightGBM) shadow → production with
+                               SHAP feature attributions on every alert
 
 DECISION INTERFACE
 ├── Pre-Market Brief           6:15am daily — watchlist, overnight positions,
@@ -100,6 +112,29 @@ FEEDBACK ENGINE
 
 ---
 
+## Learning Architecture
+
+The system is probability-native end to end. Every signal evaluation runs a **catalyst scorer** that maps a feature dict to a calibrated probability in `[0.0, 1.0]`, and writes a row to `predictions` *before any alert fires*. Conversion to "82%" only happens at presentation time in the alert formatter — internal code never traffics in 0–100 integers.
+
+Three tables anchor the loop:
+
+- **`predictions`** — immutable. Every evaluation, whether an alert fires or not. Captures `feature_vector`, `feature_schema_version`, `scorer_version`, `confidence`, the predicted window, and (later) the operator's EXECUTE / PASS / EXPIRED decision. To "correct" a prediction, write a new one with `feature_vector.supersedes` referencing the prior — never mutate.
+- **`outcomes`** — one per resolved prediction (UNIQUE constraint). MFE, MAE, realized return (and counterfactual paper return), `hit_target` / `hit_stop` flags, and a `WIN` / `LOSS` / `NEUTRAL` / `INVALID` label derived from `OUTCOME_LABEL_RULES` in `config/constants.py`.
+- **`model_versions`** — catalog of every scorer that has ever written predictions. `in_production = TRUE` for the writer of new predictions; `in_shadow = TRUE` for candidate models running alongside but not driving alerts.
+
+The **outcome resolution flow** runs hourly during market hours plus a 17:00 ET sweep. It walks `predictions WHERE outcome_id IS NULL AND created_at + window <= now()`, pulls OHLCV for each window, computes the metrics, and writes the outcome row. Price-data fetch is behind a `PriceSource` Protocol so the flow tests cleanly with a fake series and Polygon wires in via the same interface.
+
+**Scorer graduation path:**
+
+1. **Phase 1 — rules-v1.** Hand-coded threshold sums, placeholder weights. Already in production. `model_versions.version_id = 'rules-v1'` is seeded by migration 0006.
+2. **Graduation trigger — 500–1000 labeled prediction-outcome pairs.** When the resolved-outcome count crosses this band and the WIN/LOSS distribution is non-degenerate, training a GBDT (XGBoost or LightGBM) becomes worthwhile. Earlier than that and you're fitting noise.
+3. **Phase 2+ — GBDT in shadow mode.** New scorer logs predictions side-by-side with rules-v1 for at least 90 days. Promoted when AUC, Brier, and ECE materially better than rules-v1 *and* well-calibrated (not just sharper).
+4. **Post-promotion — SHAP feature attributions.** Once GBDT is in production every alert ships the top-3 SHAP attributions inline so the operator sees *why* the score is what it is. (Distinct from "outcome resolution" — SHAP is per-prediction explainability; resolution is closing matured predictions with their actual outcome.)
+
+`feature_schema_version` (in `config/constants.py` as `FEATURE_SCHEMA_VERSION`) gets bumped whenever the feature vector definition changes. Old predictions stay valid under their original schema; new predictions use the new version. The scorer comparison work that drives graduation respects this version pinning.
+
+---
+
 ## Technology Stack
 
 | Layer | Technology | Purpose |
@@ -116,7 +151,7 @@ FEEDBACK ENGINE
 | News | Benzinga Pro API | Catalyst feed |
 | Short Interest | Ortex | SI%, days to cover, borrow rate |
 | SEC Filings | EDGAR RSS + [SEC-API.io](http://SEC-API.io) | Filing detection + parsing |
-| Social | StockTwits / X / Telegram | Velocity monitoring |
+| Social | Telegram (primary) / Reddit / FinBERT + Claude Haiku | Velocity + sentiment |
 | CI/CD | GitHub Actions | Test on push, deploy on merge to main |
 | Hosting | DigitalOcean NYC | Application droplet |
 | Database Host | DigitalOcean Managed | PostgreSQL with auto-backup |
@@ -225,13 +260,18 @@ TIME STOP: 14 days from entry
 | Benzinga Pro API | $150 |
 | Ortex | $100 |
 | [SEC-API.io](http://SEC-API.io) | $50 |
-| X API Basic | $100 |
+| Anthropic API (Claude Haiku, sentiment) | ~$30 (estimate) |
 | Prefect Cloud | $0 |
 | Alpaca | $0 |
 | Uptime Robot | $0 |
-| **Total Phase 1–2** | **~$468/month** |
+| **Total Phase 1–2** | **~$398/month** |
 
-Break-even on costs: ~16% annual return on $35,000 account. One good Strategy 2 pre-promotion position covers approximately 3 months of data costs.
+Notes:
+- **X (Twitter) API:** removed. X moved to pay-per-use in Feb 2026; pricing reassessed when usage volume is known. Phase 1 social ingestion is Telegram + Reddit (both free).
+- **StockTwits:** removed. Public API closed to new registrations as of 2026. See "Social Ingestion" in Phase 1 for the deferral reasoning.
+- **Anthropic API estimate** is pending velocity-filter precision — Claude Haiku is the second-pass classifier on posts FinBERT flags as bullish or ambiguous. Cost moves with how aggressive the filter is.
+
+Break-even on costs: ~14% annual return on $35,000 account. One good Strategy 2 pre-promotion position covers approximately 3 months of data costs.
 
 ---
 
@@ -369,10 +409,21 @@ Annual pricing available: [Polygon.io](http://Polygon.io) real-time at $160/mont
 - [ ] Score clusters by co-appearance count, avg campaign performance, enforcement history
 - [ ] Output: top 20 active clusters ranked by reliability and recency
 
+#### Social Ingestion *(Weeks 4–5, ordered by priority)*
+
+Reordered for Phase 1: Telegram first, then Reddit, then revisit StockTwits only if needed. Telegram is closer to where coordinated pumps actually originate, which directly serves the promoter-network thesis. StockTwits is deferred — see notes below.
+
+1. [ ] **Telegram pump-group monitoring** (Telethon, free) — primary social signal
+2. [ ] **Reddit** (PRAW, free) — `r/pennystocks`, `r/wallstreetbets` velocity, async batch
+3. [ ] **FinBERT (local) + Claude Haiku API** hybrid sentiment classification — interface defined; concrete classifiers land alongside the ingestion PRs
+4. [ ] **StockTwits** — *DEFERRED.* Their public API is closed to new registrations as of 2026. Revisit only after Telegram + Reddit prove insufficient. If revisited, scope to the trending-symbols endpoint via Apify scraper, not 5K-ticker polling.
+
 #### Signal Engine Build (Weeks 5–6)
 - [ ] Build catalyst type classifier (all types per spec)
-- [ ] Build catalyst scorer (0–100 output)
-- [ ] Calibrate scorer against historical campaign outcomes (held-out 20% validation)
+- [x] Build catalyst scorer — `rules-v1` producing calibrated probabilities in `[0.0, 1.0]` (placeholder weights pending calibration)
+- [ ] Phase-1 calibration: collect 500–1000 prediction-outcome pairs to calibrate `rules-v1` weights empirically
+- [ ] Phase 2+ graduation: train GBDT (XGBoost / LightGBM) in shadow mode against `rules-v1`; promote when AUC / Brier / ECE materially better and well-calibrated
+- [ ] Phase 2+ explainability: attach SHAP feature attributions to every alert once GBDT promoted
 - [ ] Build real-time liquidity scorer (spread + depth + MM count + volume)
 - [ ] Establish baseline spreads by time of day and day of week from 90-day history
 - [ ] Calibrate liquidity score bins against historical fill quality
@@ -639,4 +690,4 @@ Short-term trading gains are taxed as ordinary income. At typical marginal rates
 
 ---
 
-*Last updated: Phase 0 build — see checklist above for current status.*
+*Last updated: Phase 0 complete — learning architecture foundation laid.*

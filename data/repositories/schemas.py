@@ -200,3 +200,83 @@ class CatalystWinRate(BaseModel):
     catalyst_type: str
     sample_size: int
     win_rate: float
+
+
+# ---------------------------------------------------------------------------
+# Learning architecture: predictions, outcomes, model_versions
+# ---------------------------------------------------------------------------
+class PredictionCreate(BaseModel):
+    """Payload for inserting a new prediction.
+
+    `confidence` is a calibrated probability in [0.0, 1.0]. The repo
+    layer enforces that range — see PredictionsRepository.create().
+    """
+
+    ticker: str
+    signal_type: str
+    feature_vector: dict[str, Any]
+    feature_schema_version: str
+    scorer_version: str
+    confidence: Decimal
+    predicted_window_minutes: int
+    predicted_target_pct: Decimal | None = None
+    alert_sent: bool = False
+
+
+class PredictionRead(_Schema):
+    prediction_id: uuid.UUID
+    created_at: datetime
+    ticker: str
+    signal_type: str
+    feature_vector: dict[str, Any]
+    feature_schema_version: str
+    scorer_version: str
+    confidence: Decimal
+    predicted_window_minutes: int
+    predicted_target_pct: Decimal | None = None
+    alert_sent: bool = False
+    user_decision: str | None = None
+    decision_reason: str | None = None
+    trade_id: uuid.UUID | None = None
+    outcome_id: uuid.UUID | None = None
+
+
+class OutcomeCreate(BaseModel):
+    prediction_id: uuid.UUID
+    window_close_at: datetime
+    max_favorable_excursion_pct: Decimal | None = None
+    max_adverse_excursion_pct: Decimal | None = None
+    realized_return_pct: Decimal | None = None
+    paper_return_pct: Decimal | None = None
+    hit_target: bool | None = None
+    hit_stop: bool | None = None
+    outcome_label: str
+    price_data_source: str
+
+
+class OutcomeRead(_Schema):
+    outcome_id: uuid.UUID
+    prediction_id: uuid.UUID
+    resolved_at: datetime
+    window_close_at: datetime
+    max_favorable_excursion_pct: Decimal | None = None
+    max_adverse_excursion_pct: Decimal | None = None
+    realized_return_pct: Decimal | None = None
+    paper_return_pct: Decimal | None = None
+    hit_target: bool | None = None
+    hit_stop: bool | None = None
+    outcome_label: str
+    price_data_source: str
+
+
+class ModelVersionRead(_Schema):
+    version_id: str
+    model_class: str
+    feature_schema_version: str
+    trained_at: datetime | None = None
+    training_set_size: int | None = None
+    calibration_metrics: dict[str, Any] = {}
+    in_production: bool = False
+    in_shadow: bool = False
+    artifact_path: str | None = None
+    notes: str | None = None

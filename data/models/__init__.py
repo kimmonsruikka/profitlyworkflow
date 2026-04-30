@@ -9,6 +9,9 @@ from data.models.promoter_campaign import PromoterCampaign
 from data.models.promoter_entity import PromoterEntity
 from data.models.promoter_network_edge import PromoterNetworkEdge
 from data.models.sec_filing import SecFiling
+from data.models.model_version import ModelVersion
+from data.models.outcome import Outcome
+from data.models.prediction import Prediction
 from data.models.signal import Signal
 from data.models.ticker import Ticker
 from data.models.trade import Trade
@@ -18,7 +21,10 @@ __all__ = [
     "AccountState",
     "Base",
     "GateDecision",
+    "ModelVersion",
+    "Outcome",
     "Position",
+    "Prediction",
     "PriceData",
     "PromoterCampaign",
     "PromoterEntity",

@@ -97,6 +97,27 @@ PDT_MAX_DAY_TRADES = 3
 PDT_ROLLING_DAYS = 5
 
 # ---------------------------------------------------------------------------
+# LEARNING ARCHITECTURE
+# ---------------------------------------------------------------------------
+# Bumped whenever the prediction feature_vector definition changes. Old
+# rows stay valid under their original schema; new rows use the new version.
+FEATURE_SCHEMA_VERSION = "fv-v1"
+
+# Thresholds the outcome-resolution flow applies after computing realized
+# return / hit_target / hit_stop. The resolution flow defers to these
+# values so the labeling policy is a config knob, not a code change.
+OUTCOME_LABEL_RULES = {
+    "win_threshold_pct": 2.0,    # realized_return_pct >= 2.0  → WIN
+    "loss_threshold_pct": -1.0,  # realized_return_pct <= -1.0 → LOSS
+    # Anything in between with target/stop unhit → NEUTRAL.
+    # No usable price data at all → INVALID.
+    "label_win": "WIN",
+    "label_loss": "LOSS",
+    "label_neutral": "NEUTRAL",
+    "label_invalid": "INVALID",
+}
+
+# ---------------------------------------------------------------------------
 # EDGAR / SEC INGESTION
 # ---------------------------------------------------------------------------
 EDGAR_RSS_URL = "https://www.sec.gov/cgi-bin/browse-edgar"
