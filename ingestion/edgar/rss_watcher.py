@@ -267,7 +267,7 @@ async def _process_filing_async(payload: dict) -> dict:
     from sqlalchemy import select as _select
     from sqlalchemy import update as _update
 
-    from data.db import get_session
+    from data.db import session_from, task_local_session_factory
     from data.models.promoter_entity import PromoterEntity
     from data.models.underwriter import Underwriter
     from data.repositories.promoter_repo import PromoterRepository
@@ -282,145 +282,156 @@ async def _process_filing_async(payload: dict) -> dict:
         return {"status": "skipped", "reason": "no_accession"}
 
     text = await filing_parser.fetch_filing_text(accession, link=link)
-    if not text:
-        logger.info(
-            "process_filing {acc}: empty text — marking processed without extraction",
-            acc=accession,
-        )
-        async with get_session() as session:
+
+    # Single task-local engine for the whole task body. Disposed in the
+    # finally branch of task_local_session_factory so every Celery task
+    # gets a fresh connection on its own asyncio.run() loop. The
+    # module-level `engine` is NOT used inside Celery — its event-loop
+    # binding outlives a single asyncio.run() and produces
+    #   RuntimeError: got Future attached to a different loop
+    # on the second task. See data.db.task_local_session_factory.
+    async with task_local_session_factory() as factory:
+        if not text:
+            logger.info(
+                "process_filing {acc}: empty text — marking processed without extraction",
+                acc=accession,
+            )
+            async with session_from(factory) as session:
+                await session.execute(
+                    _update(SecFiling)
+                    .where(SecFiling.accession_number == accession)
+                    .values(processed=True)
+                )
+            return {"status": "no_text", "accession": accession}
+
+        update_values: dict = {"processed": True}
+        findings: dict = {"accession": accession, "form": form_type}
+
+        async with session_from(factory) as session:
+            # Pull lookup tables for the cross-references the extractors need.
+            ir_firms = (
+                await session.execute(
+                    _select(PromoterEntity.name).where(PromoterEntity.type == "ir_firm")
+                )
+            ).scalars().all()
+            underwriter_rows = (
+                await session.execute(
+                    _select(Underwriter.underwriter_id, Underwriter.name)
+                )
+            ).all()
+            underwriter_by_lower_name = {
+                (row.name or "").strip().lower(): row.underwriter_id
+                for row in underwriter_rows
+            }
+    
+            # ---- 8-K branch
+            if form_type.upper().startswith("8-K"):
+                items = filing_parser.extract_8k_items(text)
+                update_values["item_numbers"] = items["items"]
+                update_values["full_text"] = {
+                    "items": items["items"],
+                    "item_texts": items["item_texts"],
+                }
+                findings["items"] = items["items"]
+    
+                ir = filing_parser.extract_ir_firm(text, known_firms=ir_firms)
+                if ir:
+                    update_values["ir_firm_mentioned"] = ir["firm_name"]
+                    update_values["compensation_disclosed"] = (
+                        ir["compensation_amount"] is not None
+                        or ir["compensation_stock_shares"] is not None
+                    )
+                    if ir["compensation_amount"] is not None:
+                        update_values["compensation_amount"] = ir["compensation_amount"]
+                    findings["ir_firm"] = ir["firm_name"]
+                    findings["ir_compensation"] = ir["compensation_amount"]
+    
+                    # Upsert into promoter_entities so the network graph grows
+                    # automatically as we discover new IR firms.
+                    if not ir["known_match"]:
+                        repo = PromoterRepository(session)
+                        await repo.upsert_entity({
+                            "name": ir["firm_name"],
+                            "type": "ir_firm",
+                            "first_seen_edgar": payload.get("filed_at_dt") or None,
+                            "notes": f"Discovered via filing {accession}",
+                        })
+    
+                rs = filing_parser.extract_reverse_split(text)
+                if rs:
+                    # Reverse split signals live in full_text alongside item bodies.
+                    update_values["full_text"] = {
+                        **update_values.get("full_text", {}),
+                        "reverse_split": rs,
+                    }
+                    findings["reverse_split"] = rs["ratio"]
+    
+            # ---- S-1 / S-3 / 424B-series branch
+            elif form_type.upper().startswith(("S-1", "S-3", "424B")):
+                uw = filing_parser.extract_underwriter(
+                    text, known_names=[r.name for r in underwriter_rows]
+                )
+                if uw:
+                    uw_id = underwriter_by_lower_name.get(uw.strip().lower())
+                    if uw_id is not None:
+                        update_values["underwriter_id"] = uw_id
+                        findings["underwriter"] = uw
+    
+                if form_type.upper().startswith("S-3"):
+                    update_values["s3_effective"] = True
+                    findings["s3_effective"] = True
+    
+            # ---- Form 4 branch
+            elif form_type.strip() == "4":
+                insider = filing_parser.extract_insider_context(text)
+                if insider:
+                    if insider.get("transaction_type") == "buy":
+                        update_values["form4_insider_buy"] = True
+                    update_values["full_text"] = {"insider": insider}
+                    findings["insider"] = {
+                        "type": insider.get("transaction_type"),
+                        "shares": insider.get("shares"),
+                        "relationship": insider.get("relationship"),
+                    }
+    
+            # Persist whatever we extracted.
             await session.execute(
                 _update(SecFiling)
                 .where(SecFiling.accession_number == accession)
-                .values(processed=True)
+                .values(**update_values)
             )
-        return {"status": "no_text", "accession": accession}
-
-    update_values: dict = {"processed": True}
-    findings: dict = {"accession": accession, "form": form_type}
-
-    async with get_session() as session:
-        # Pull lookup tables for the cross-references the extractors need.
-        ir_firms = (
-            await session.execute(
-                _select(PromoterEntity.name).where(PromoterEntity.type == "ir_firm")
+            # Signal evaluation snapshot — built inside this session so we
+            # see the just-written values, but the eval itself runs in a
+            # FRESH session below so a signal-eval failure doesn't roll
+            # back the filing update.
+            signal_payload = await _build_signal_payload(
+                session, accession, payload, update_values, findings
             )
-        ).scalars().all()
-        underwriter_rows = (
-            await session.execute(
-                _select(Underwriter.underwriter_id, Underwriter.name)
-            )
-        ).all()
-        underwriter_by_lower_name = {
-            (row.name or "").strip().lower(): row.underwriter_id
-            for row in underwriter_rows
-        }
+    
+        # Filing-persistence transaction committed when session_from()
+        # exited cleanly above. Signal evaluation runs in a FRESH session
+        # from the SAME task-local factory — best-effort, errors logged
+        # and swallowed at this boundary so a noisy scorer can't make
+        # filings look unprocessed.
+        if signal_payload is not None:
+            try:
+                from signals.engine import SignalEngine
+                from signals.scoring.catalyst_scorer import RulesV1Scorer
 
-        # ---- 8-K branch
-        if form_type.upper().startswith("8-K"):
-            items = filing_parser.extract_8k_items(text)
-            update_values["item_numbers"] = items["items"]
-            update_values["full_text"] = {
-                "items": items["items"],
-                "item_texts": items["item_texts"],
-            }
-            findings["items"] = items["items"]
-
-            ir = filing_parser.extract_ir_firm(text, known_firms=ir_firms)
-            if ir:
-                update_values["ir_firm_mentioned"] = ir["firm_name"]
-                update_values["compensation_disclosed"] = (
-                    ir["compensation_amount"] is not None
-                    or ir["compensation_stock_shares"] is not None
+                async with session_from(factory) as eval_session:
+                    engine = SignalEngine(scorer=RulesV1Scorer(), session=eval_session)
+                    prediction = await engine.evaluate_edgar_filing(
+                        signal_payload["filing"], signal_payload["ticker_metadata"],
+                    )
+                    if prediction is not None:
+                        findings["prediction_id"] = str(prediction.prediction_id)
+            except Exception:
+                logger.exception(
+                    "signal evaluation failed for {acc} — filing was still persisted",
+                    acc=accession,
                 )
-                if ir["compensation_amount"] is not None:
-                    update_values["compensation_amount"] = ir["compensation_amount"]
-                findings["ir_firm"] = ir["firm_name"]
-                findings["ir_compensation"] = ir["compensation_amount"]
 
-                # Upsert into promoter_entities so the network graph grows
-                # automatically as we discover new IR firms.
-                if not ir["known_match"]:
-                    repo = PromoterRepository(session)
-                    await repo.upsert_entity({
-                        "name": ir["firm_name"],
-                        "type": "ir_firm",
-                        "first_seen_edgar": payload.get("filed_at_dt") or None,
-                        "notes": f"Discovered via filing {accession}",
-                    })
-
-            rs = filing_parser.extract_reverse_split(text)
-            if rs:
-                # Reverse split signals live in full_text alongside item bodies.
-                update_values["full_text"] = {
-                    **update_values.get("full_text", {}),
-                    "reverse_split": rs,
-                }
-                findings["reverse_split"] = rs["ratio"]
-
-        # ---- S-1 / S-3 / 424B-series branch
-        elif form_type.upper().startswith(("S-1", "S-3", "424B")):
-            uw = filing_parser.extract_underwriter(
-                text, known_names=[r.name for r in underwriter_rows]
-            )
-            if uw:
-                uw_id = underwriter_by_lower_name.get(uw.strip().lower())
-                if uw_id is not None:
-                    update_values["underwriter_id"] = uw_id
-                    findings["underwriter"] = uw
-
-            if form_type.upper().startswith("S-3"):
-                update_values["s3_effective"] = True
-                findings["s3_effective"] = True
-
-        # ---- Form 4 branch
-        elif form_type.strip() == "4":
-            insider = filing_parser.extract_insider_context(text)
-            if insider:
-                if insider.get("transaction_type") == "buy":
-                    update_values["form4_insider_buy"] = True
-                update_values["full_text"] = {"insider": insider}
-                findings["insider"] = {
-                    "type": insider.get("transaction_type"),
-                    "shares": insider.get("shares"),
-                    "relationship": insider.get("relationship"),
-                }
-
-        # Persist whatever we extracted.
-        await session.execute(
-            _update(SecFiling)
-            .where(SecFiling.accession_number == accession)
-            .values(**update_values)
-        )
-        # Signal evaluation snapshot — built inside this session so we
-        # see the just-written values, but the eval itself runs in a
-        # FRESH session below so a signal-eval failure doesn't roll
-        # back the filing update.
-        signal_payload = await _build_signal_payload(
-            session, accession, payload, update_values, findings
-        )
-
-    # The filing-processing transaction is committed here (get_session()
-    # commits on clean exit). Now run signal evaluation in a separate
-    # session — best-effort, swallow errors at this boundary.
-    if signal_payload is not None:
-        try:
-            from data.db import get_session as _get_session
-            from signals.engine import SignalEngine
-            from signals.scoring.catalyst_scorer import RulesV1Scorer
-
-            async with _get_session() as eval_session:
-                engine = SignalEngine(scorer=RulesV1Scorer(), session=eval_session)
-                prediction = await engine.evaluate_edgar_filing(
-                    signal_payload["filing"], signal_payload["ticker_metadata"],
-                )
-                if prediction is not None:
-                    findings["prediction_id"] = str(prediction.prediction_id)
-        except Exception:
-            logger.exception(
-                "signal evaluation failed for {acc} — filing was still persisted",
-                acc=accession,
-            )
-
+    # Engine disposed by task_local_session_factory's finally clause.
     logger.info("process_filing complete: {}", findings)
     return findings
 
