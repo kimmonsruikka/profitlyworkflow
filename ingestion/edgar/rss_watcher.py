@@ -249,18 +249,151 @@ async def poll_once() -> dict[str, int]:
 
 
 # ---------------------------------------------------------------------------
-# Celery task — stub for downstream parsing
+# Celery task — fetch filing text, run extractors, persist findings
 # ---------------------------------------------------------------------------
 @celery_app.task(name="ingestion.edgar.process_filing", bind=True, max_retries=3)
 def process_filing(self, payload: dict) -> dict:
-    """Phase 0: just acknowledge. Real 8-K item / IR-firm parsing comes next."""
-    logger.info(
-        "process_filing accepted form={form} cik={cik} accession={acc}",
-        form=payload.get("form_type"),
-        cik=payload.get("cik"),
-        acc=payload.get("accession_number"),
-    )
-    return {"acknowledged": True, "accession": payload.get("accession_number")}
+    """Fetch the filing body, run form-appropriate extractors, update the
+    sec_filings row, and upsert any new IR firms or underwriters we found.
+
+    Runs the async pipeline in a fresh event loop per task — Celery's
+    prefork worker model isolates each task in its own process so this is
+    safe.
+    """
+    return asyncio.run(_process_filing_async(payload))
+
+
+async def _process_filing_async(payload: dict) -> dict:
+    from sqlalchemy import select as _select
+    from sqlalchemy import update as _update
+
+    from data.db import get_session
+    from data.models.promoter_entity import PromoterEntity
+    from data.models.underwriter import Underwriter
+    from data.repositories.promoter_repo import PromoterRepository
+    from ingestion.edgar import filing_parser
+
+    accession = payload.get("accession_number")
+    form_type = payload.get("form_type") or ""
+    link = payload.get("link")
+
+    if not accession:
+        logger.warning("process_filing: missing accession_number, skipping")
+        return {"status": "skipped", "reason": "no_accession"}
+
+    text = await filing_parser.fetch_filing_text(accession, link=link)
+    if not text:
+        logger.info(
+            "process_filing {acc}: empty text — marking processed without extraction",
+            acc=accession,
+        )
+        async with get_session() as session:
+            await session.execute(
+                _update(SecFiling)
+                .where(SecFiling.accession_number == accession)
+                .values(processed=True)
+            )
+        return {"status": "no_text", "accession": accession}
+
+    update_values: dict = {"processed": True}
+    findings: dict = {"accession": accession, "form": form_type}
+
+    async with get_session() as session:
+        # Pull lookup tables for the cross-references the extractors need.
+        ir_firms = (
+            await session.execute(
+                _select(PromoterEntity.name).where(PromoterEntity.type == "ir_firm")
+            )
+        ).scalars().all()
+        underwriter_rows = (
+            await session.execute(
+                _select(Underwriter.underwriter_id, Underwriter.name)
+            )
+        ).all()
+        underwriter_by_lower_name = {
+            (row.name or "").strip().lower(): row.underwriter_id
+            for row in underwriter_rows
+        }
+
+        # ---- 8-K branch
+        if form_type.upper().startswith("8-K"):
+            items = filing_parser.extract_8k_items(text)
+            update_values["item_numbers"] = items["items"]
+            update_values["full_text"] = {
+                "items": items["items"],
+                "item_texts": items["item_texts"],
+            }
+            findings["items"] = items["items"]
+
+            ir = filing_parser.extract_ir_firm(text, known_firms=ir_firms)
+            if ir:
+                update_values["ir_firm_mentioned"] = ir["firm_name"]
+                update_values["compensation_disclosed"] = (
+                    ir["compensation_amount"] is not None
+                    or ir["compensation_stock_shares"] is not None
+                )
+                if ir["compensation_amount"] is not None:
+                    update_values["compensation_amount"] = ir["compensation_amount"]
+                findings["ir_firm"] = ir["firm_name"]
+                findings["ir_compensation"] = ir["compensation_amount"]
+
+                # Upsert into promoter_entities so the network graph grows
+                # automatically as we discover new IR firms.
+                if not ir["known_match"]:
+                    repo = PromoterRepository(session)
+                    await repo.upsert_entity({
+                        "name": ir["firm_name"],
+                        "type": "ir_firm",
+                        "first_seen_edgar": payload.get("filed_at_dt") or None,
+                        "notes": f"Discovered via filing {accession}",
+                    })
+
+            rs = filing_parser.extract_reverse_split(text)
+            if rs:
+                # Reverse split signals live in full_text alongside item bodies.
+                update_values["full_text"] = {
+                    **update_values.get("full_text", {}),
+                    "reverse_split": rs,
+                }
+                findings["reverse_split"] = rs["ratio"]
+
+        # ---- S-1 / S-3 / 424B-series branch
+        elif form_type.upper().startswith(("S-1", "S-3", "424B")):
+            uw = filing_parser.extract_underwriter(
+                text, known_names=[r.name for r in underwriter_rows]
+            )
+            if uw:
+                uw_id = underwriter_by_lower_name.get(uw.strip().lower())
+                if uw_id is not None:
+                    update_values["underwriter_id"] = uw_id
+                    findings["underwriter"] = uw
+
+            if form_type.upper().startswith("S-3"):
+                update_values["s3_effective"] = True
+                findings["s3_effective"] = True
+
+        # ---- Form 4 branch
+        elif form_type.strip() == "4":
+            insider = filing_parser.extract_insider_context(text)
+            if insider:
+                if insider.get("transaction_type") == "buy":
+                    update_values["form4_insider_buy"] = True
+                update_values["full_text"] = {"insider": insider}
+                findings["insider"] = {
+                    "type": insider.get("transaction_type"),
+                    "shares": insider.get("shares"),
+                    "relationship": insider.get("relationship"),
+                }
+
+        # Persist whatever we extracted.
+        await session.execute(
+            _update(SecFiling)
+            .where(SecFiling.accession_number == accession)
+            .values(**update_values)
+        )
+
+    logger.info("process_filing complete: {}", findings)
+    return findings
 
 
 # ---------------------------------------------------------------------------
