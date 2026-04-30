@@ -128,6 +128,10 @@ The **outcome resolution flow** runs hourly during market hours plus a 17:00 ET 
 
 Predictions on tickers without Polygon coverage are resolved as **`INVALID`** with a structured `invalid_reason` (`no_price_data`, `insufficient_bars`, `polygon_error`) — they're not silently dropped. Transient network errors leave the prediction unresolved so the next sweep retries it.
 
+**EDGAR filings flow through `SignalEngine.evaluate_edgar_filing()`** in the Celery worker. Prediction-worthy filings — material 8-K items (1.01, 2.01, 2.02, 5.02, 5.03, 8.01, 3.02), S-3 marked effective, Form 4 buys ≥ $50K, or any filing on a ticker that matches the promoter network — fire a prediction via rules-v1 and write a row to `predictions`. Non-worthy filings are still parsed and stored on `sec_filings` but skip the prediction path; the skip reason is logged so operators can audit the filter without scanning every filing.
+
+**All Phase-1 predictions are uncalibrated** (`ScoreResult.uncalibrated_warning=True`) until the rules-v1 → GBDT graduation. Confidence values should not be presented to users as probabilities yet — alert formatters that display percentages on uncalibrated scores have to mark them as such.
+
 **Scorer graduation path:**
 
 1. **Phase 1 — rules-v1.** Hand-coded threshold sums, placeholder weights. Already in production. `model_versions.version_id = 'rules-v1'` is seeded by migration 0006.
@@ -694,4 +698,4 @@ Short-term trading gains are taxed as ordinary income. At typical marginal rates
 
 ---
 
-*Last updated: Phase 0 → Phase 1 transition — outcome resolution wired to live price data.*
+*Last updated: Phase 1 — learning loop active end-to-end on EDGAR signals.*

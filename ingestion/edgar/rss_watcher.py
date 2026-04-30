@@ -391,9 +391,121 @@ async def _process_filing_async(payload: dict) -> dict:
             .where(SecFiling.accession_number == accession)
             .values(**update_values)
         )
+        # Signal evaluation snapshot — built inside this session so we
+        # see the just-written values, but the eval itself runs in a
+        # FRESH session below so a signal-eval failure doesn't roll
+        # back the filing update.
+        signal_payload = await _build_signal_payload(
+            session, accession, payload, update_values, findings
+        )
+
+    # The filing-processing transaction is committed here (get_session()
+    # commits on clean exit). Now run signal evaluation in a separate
+    # session — best-effort, swallow errors at this boundary.
+    if signal_payload is not None:
+        try:
+            from data.db import get_session as _get_session
+            from signals.engine import SignalEngine
+            from signals.scoring.catalyst_scorer import RulesV1Scorer
+
+            async with _get_session() as eval_session:
+                engine = SignalEngine(scorer=RulesV1Scorer(), session=eval_session)
+                prediction = await engine.evaluate_edgar_filing(
+                    signal_payload["filing"], signal_payload["ticker_metadata"],
+                )
+                if prediction is not None:
+                    findings["prediction_id"] = str(prediction.prediction_id)
+        except Exception:
+            logger.exception(
+                "signal evaluation failed for {acc} — filing was still persisted",
+                acc=accession,
+            )
 
     logger.info("process_filing complete: {}", findings)
     return findings
+
+
+async def _build_signal_payload(
+    session,
+    accession: str,
+    payload: dict,
+    update_values: dict,
+    findings: dict,
+) -> dict | None:
+    """Assemble the (filing, ticker_metadata) snapshot the signal engine needs.
+
+    Builds a plain-dict view of the just-updated sec_filings row plus
+    metadata pulled from the tickers / promoter_entities / sec_filings
+    tables. Returns None if anything required is missing — callers
+    treat None as "skip signal evaluation" without surfacing an error.
+    """
+    from sqlalchemy import select as _select
+    from sqlalchemy import func as _func
+
+    from data.models.promoter_entity import PromoterEntity
+    from data.models.ticker import Ticker
+
+    ticker = update_values.get("ticker") or payload.get("ticker") or findings.get("ticker")
+    cik = payload.get("cik")
+
+    # Try to resolve ticker from cik if we don't have one yet.
+    if not ticker and cik:
+        cik_row = (
+            await session.execute(_select(Ticker).where(Ticker.cik == cik))
+        ).scalar_one_or_none()
+        if cik_row:
+            ticker = cik_row.ticker
+
+    ticker_row = None
+    if ticker:
+        ticker_row = (
+            await session.execute(_select(Ticker).where(Ticker.ticker == ticker))
+        ).scalar_one_or_none()
+
+    # Promoter-network match: how many entities match the ir_firm_mentioned
+    # text on this filing?
+    ir_firm = update_values.get("ir_firm_mentioned") or findings.get("ir_firm")
+    promoter_match_count = 0
+    if ir_firm:
+        promoter_match_count = (
+            await session.execute(
+                _select(_func.count())
+                .select_from(PromoterEntity)
+                .where(_func.lower(PromoterEntity.name) == ir_firm.strip().lower())
+            )
+        ).scalar_one() or 0
+
+    # Underwriter match contributes to the count too.
+    if update_values.get("underwriter_id"):
+        promoter_match_count += 1
+
+    filing_view = {
+        "ticker": ticker,
+        "cik": cik,
+        "accession_number": accession,
+        "form_type": payload.get("form_type"),
+        "item_numbers": update_values.get("item_numbers", []),
+        "ir_firm_mentioned": ir_firm,
+        "s3_effective": bool(update_values.get("s3_effective")),
+        "form4_insider_buy": bool(update_values.get("form4_insider_buy")),
+        # form4_value_usd / form4_transaction_code aren't currently
+        # populated by the parser; stay None until the Form-4 extractor
+        # is enhanced. Filter still gates on form4_insider_buy.
+        "form4_value_usd": None,
+        "form4_transaction_code": None,
+        "underwriter_id": update_values.get("underwriter_id"),
+    }
+    ticker_metadata = {
+        "ticker": ticker,
+        "exchange": ticker_row.exchange if ticker_row else None,
+        "float_shares": ticker_row.float_shares if ticker_row else None,
+        "market_cap_usd": None,  # not stored on tickers; add when available
+        "promoter_match_count": promoter_match_count,
+        "promoter_match_reliability_scores": [],
+        "days_since_last_filing": None,
+        "days_since_last_promoter_filing": None,
+    }
+    return {"filing": filing_view, "ticker_metadata": ticker_metadata}
 
 
 # ---------------------------------------------------------------------------
