@@ -19,9 +19,18 @@ import sys
 import time
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+# Load .env.production BEFORE any imports that touch config.settings.
+# Operator scripts run via `sudo -u trading python scripts/foo.py` don't
+# inherit shell env vars, so we have to load the file explicitly here.
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+env_file = ROOT / ".env.production"
+if env_file.exists():
+    load_dotenv(env_file, override=True)
 
 from loguru import logger  # noqa: E402
 
