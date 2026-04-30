@@ -1,14 +1,23 @@
 """Catalyst scorer abstraction + the rules-v1 Phase-1 implementation.
 
-Every scorer maps a feature dict → a calibrated probability in [0.0, 1.0]
-plus the bookkeeping the predictions table needs (scorer_version,
-feature_schema_version, feature_vector echo). The internal pipeline is
-probability-native — convert to integer percent only at presentation
-time in alert formatters.
+Every scorer maps a feature dict → a probability-shaped float in
+`[0.0, 1.0]` plus the bookkeeping the predictions table needs
+(scorer_version, feature_schema_version, feature_vector echo). The
+internal pipeline is probability-shaped — convert to integer percent
+only at presentation time in alert formatters.
 
-Phase-1 weights are placeholders. They get calibrated empirically once
-500–1000 prediction-outcome pairs have been collected; that's the
-graduation trigger to start training a GBDT scorer in shadow mode.
+`[0.0, 1.0]` is the *output format contract*. Calibration — the
+empirical property that, across many predictions at confidence 0.7, the
+realized hit rate is ~70% — is a separate concern. It's a graduation
+milestone, not an invariant of every scorer. Rules-v1 is uncalibrated
+by design (its weights are placeholders); ScoreResult.uncalibrated_warning
+defaults to True so callers know not to take the number too literally.
+
+Phase-1 weights get calibrated empirically once 500–1000 prediction-
+outcome pairs have been collected; that's the graduation trigger to
+start training a GBDT scorer in shadow mode. Once that scorer passes
+calibration validation (Brier, ECE), it emits ScoreResult with
+uncalibrated_warning=False.
 """
 
 from __future__ import annotations
@@ -34,6 +43,12 @@ class ScoreResult:
     scorer_version: str
     feature_schema_version: str
     feature_vector: dict[str, Any] = field(default_factory=dict)
+    # Default-True so a new scorer is uncalibrated until proven otherwise.
+    # Calibration-validated scorers (Brier / ECE within bounds) emit
+    # ScoreResult(..., uncalibrated_warning=False). Alert formatters can
+    # use this to suppress "78% confidence" framing on uncalibrated scores
+    # if we choose — until then, the contract is just the [0, 1] range.
+    uncalibrated_warning: bool = True
 
     @property
     def confidence_decimal(self) -> Decimal:
@@ -78,10 +93,18 @@ _RULES_V1_WEIGHTS: dict[str, float] = {
 class RulesV1Scorer(CatalystScorer):
     """Hand-coded scorer that sums weights for present feature flags.
 
+    The output is an **uncalibrated heuristic score** in `[0.0, 1.0]`. The
+    `[0, 1]` range is the format contract every scorer in the codebase
+    promises — calibration (the empirical property that confidence 0.7
+    means a ~70% realized hit rate) is a separate property entirely, and
+    rules-v1 makes no claim to it. Calibration TBD when 500–1000 labeled
+    prediction-outcome pairs accumulate; until then, ScoreResult emitted
+    here carries uncalibrated_warning=True so callers know.
+
     Inputs in `features` are expected to be booleans (or 0/1) keyed by the
     names in _RULES_V1_WEIGHTS. Missing keys default to 0. Output is
     clamped to [0.0, 1.0] so out-of-range weight changes can't produce
-    invalid probabilities.
+    out-of-range scores.
     """
 
     version: str = "rules-v1"
@@ -100,4 +123,7 @@ class RulesV1Scorer(CatalystScorer):
             # know about (extras the caller passed) survive too — handy
             # for downstream feature-attribution work.
             feature_vector={"inputs": dict(features), "weights": dict(_RULES_V1_WEIGHTS)},
+            # Rules-v1 is uncalibrated by design; flip to False only after
+            # a successor scorer passes calibration validation.
+            uncalibrated_warning=True,
         )

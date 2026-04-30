@@ -116,3 +116,36 @@ def test_score_nan_input_treated_as_zero_via_clamp():
 def test_abstract_catalyst_scorer_cannot_be_instantiated_directly():
     with pytest.raises(TypeError):
         CatalystScorer()  # type: ignore[abstract]
+
+
+# ---------------------------------------------------------------------------
+# uncalibrated_warning — rules-v1 is uncalibrated by design
+# ---------------------------------------------------------------------------
+def test_rules_v1_emits_uncalibrated_warning_true():
+    """rules-v1 is a heuristic. The flag stays True until a successor
+    scorer passes calibration validation (Brier / ECE)."""
+    scorer = RulesV1Scorer()
+    out = scorer.score({"edgar_priority_form": True})
+    assert out.uncalibrated_warning is True
+
+
+def test_score_result_uncalibrated_warning_defaults_to_true():
+    """Safety default — a future scorer that forgets to pass the flag is
+    treated as uncalibrated (the safer assumption) until proven otherwise."""
+    result = ScoreResult(
+        probability=0.7,
+        scorer_version="hypothetical-future",
+        feature_schema_version="fv-v1",
+    )
+    assert result.uncalibrated_warning is True
+
+
+def test_score_result_can_be_marked_calibrated_explicitly():
+    """A calibration-validated scorer opts out by passing False."""
+    result = ScoreResult(
+        probability=0.7,
+        scorer_version="gbdt-v3-calibrated",
+        feature_schema_version="fv-v2",
+        uncalibrated_warning=False,
+    )
+    assert result.uncalibrated_warning is False

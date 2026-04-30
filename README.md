@@ -114,7 +114,9 @@ FEEDBACK ENGINE
 
 ## Learning Architecture
 
-The system is probability-native end to end. Every signal evaluation runs a **catalyst scorer** that maps a feature dict to a calibrated probability in `[0.0, 1.0]`, and writes a row to `predictions` *before any alert fires*. Conversion to "82%" only happens at presentation time in the alert formatter — internal code never traffics in 0–100 integers.
+The system is probability-shaped end to end. Every signal evaluation runs a **catalyst scorer** that maps a feature dict to a float in `[0.0, 1.0]`, and writes a row to `predictions` *before any alert fires*. Conversion to "82%" only happens at presentation time in the alert formatter — internal code never traffics in 0–100 integers.
+
+The `[0.0, 1.0]` range is the *format contract* every scorer promises. **Calibration** — the empirical property that confidence 0.7 means a ~70% realized hit rate — is a *graduation milestone*, not an invariant of every scorer. Rules-v1 is uncalibrated by design; its `ScoreResult.uncalibrated_warning` is `True`. Future scorers flip the flag to `False` only after Brier / ECE validation.
 
 Three tables anchor the loop:
 
