@@ -137,3 +137,74 @@ async def init_db() -> None:
     """Create all tables from registered ORM metadata."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+
+@asynccontextmanager
+async def session_from(
+    factory: async_sessionmaker,
+) -> AsyncIterator[AsyncSession]:
+    """Yield a session from `factory`, commit on clean exit, roll back on error.
+
+    Same semantics as `get_session()` but uses a caller-supplied
+    sessionmaker instead of the module-level one. Pair with
+    `task_local_session_factory()` for Celery tasks.
+    """
+    async with factory() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+
+
+@asynccontextmanager
+async def task_local_session_factory() -> AsyncIterator[async_sessionmaker]:
+    """Per-task engine + sessionmaker. Use from Celery tasks.
+
+    Background: Celery's prefork worker invokes tasks via
+    ``asyncio.run(...)``, which creates a fresh event loop per task.
+    The module-level ``engine`` / ``AsyncSessionLocal`` get bound to
+    whichever loop calls into them first; reusing them in subsequent
+    asyncio.run() loops produces
+
+        RuntimeError: got Future attached to a different loop
+
+    inside asyncpg. The fix is to create the engine on the task's own
+    loop and dispose it on the way out. Yielded value is a
+    ``async_sessionmaker`` so the task body can open as many sessions
+    as it needs (filing persistence + signal eval, etc.) — they all
+    share the task-local engine.
+
+    Pattern:
+
+        async def my_task_body():
+            async with task_local_session_factory() as factory:
+                async with factory() as session:
+                    ...   # filing persistence
+                async with factory() as session:
+                    ...   # signal eval
+            # engine disposed here
+
+    Disposal cost is one TCP teardown per task; acceptable on the
+    Starter-tier Postgres. If task volume grows enough that disposal
+    is the bottleneck, switch to a per-loop engine cache keyed on
+    ``id(asyncio.get_running_loop())`` — same correctness shape,
+    amortizes engine setup across tasks that share a loop.
+    """
+    async_url, connect_args = _async_url_and_connect_args(settings.DATABASE_URL)
+    task_engine = create_async_engine(
+        async_url,
+        pool_pre_ping=True,
+        connect_args=connect_args,
+    )
+    try:
+        factory = async_sessionmaker(
+            bind=task_engine,
+            class_=AsyncSession,
+            expire_on_commit=False,
+            autoflush=False,
+        )
+        yield factory
+    finally:
+        await task_engine.dispose()
