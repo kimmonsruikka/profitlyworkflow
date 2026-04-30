@@ -26,11 +26,13 @@ jobs:
             ./venv/bin/pip install -r requirements.txt --quiet
             ./venv/bin/alembic upgrade head
             sudo cp deploy/edgar-watcher.service /etc/systemd/system/edgar-watcher.service
+            sudo cp deploy/celery-worker.service /etc/systemd/system/celery-worker.service
             sudo systemctl daemon-reload
             sudo systemctl enable edgar-watcher
+            sudo systemctl enable celery-worker
             sudo systemctl restart trading-app
             sudo systemctl restart edgar-watcher
-            sudo systemctl restart celery-worker || true
+            sudo systemctl restart celery-worker
             sudo systemctl restart prefect-agent || true
             sleep 5
             curl -f http://localhost:8000/health || exit 1
