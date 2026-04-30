@@ -1,5 +1,51 @@
 # Trading Intelligence System — Claude Code Guide
 
+## Current State
+
+**Infrastructure** (live on DigitalOcean NYC `159.203.190.10`):
+- `trading-app.service` — FastAPI on `127.0.0.1:8000`
+- `edgar-watcher.service` — 5,000 tickers, 8 form types
+- `celery-worker.service` — concurrency=2
+- Redis (Celery broker)
+- PostgreSQL 18 + TimescaleDB — 13 tables
+- App path: `/app/profitlyworkflow`
+
+**Phase 1 status**
+
+Complete:
+- EDGAR pipeline, 8-K extractor, `filing_parser`
+- Celery worker, S-3 effective detection
+- Form 4 insider parsing, underwriters table
+- 5,000 ticker universe (OTC + Nasdaq CM)
+- 110+ filings processed
+
+Next:
+- StockTwits social velocity monitoring
+- SEC enforcement case mining (promoter DB)
+- Catalyst scorer
+- Daily brief generators
+
+**Key decisions**
+- OTC edge → social APIs + promoter network
+- Nasdaq CM edge → EDGAR filing patterns
+- Float filter <10M unifies both
+- Massive/Polygon = Starter (upgrade before Phase 2)
+- `BROKER_MODE=paper` (Alpaca)
+
+**End of day** — start the float updater before closing the laptop:
+
+```bash
+tmux new-session -s floats2
+sudo -u trading bash -c '
+    set -a
+    source /app/profitlyworkflow/.env.production
+    set +a
+    cd /app/profitlyworkflow
+    ./venv/bin/python scripts/update_floats.py
+'
+# detach: Ctrl+B then D    (~13 hours on Starter)
+```
+
 ## Architecture Overview
 
 This repository is a signal intelligence platform for catalyst-driven momentum trading on low-float equities. It runs **two strategies concurrently on shared infrastructure**: Strategy 1 reacts to confirmed catalysts intraday on a 15-minute to 1-day hold; Strategy 2 positions ahead of catalysts by reading the promotion infrastructure (IR firms, attorneys, transfer agents named in SEC filings) days before retail sees the move. The system finds and scores opportunities, sends a structured alert to Telegram with confidence / liquidity / promoter-network context, and the operator decides EXECUTE or PASS. Either way the outcome is captured (live trade, paper trade, or expired alert) and fed back into the model.
@@ -40,7 +86,7 @@ The codebase is organized in thin layers: ingestion (EDGAR, Polygon, Benzinga, s
 
 ## Current Phase
 
-**Phase 0 — Foundation build.** No live trading. No real API connections required yet. Focus is on infrastructure soundness: schema, repositories, gatekeeper, broker abstraction, paper engine, CI/CD, health endpoint. Phase 1 begins the promoter knowledge base build and the signal engine; Phase 2 adds reduced-size live trading via Alpaca; Phase 3 expands to both strategies on IBKR. See the phased checklist in `README.md`.
+See **Current State** at the top for the live snapshot. Phase 0 (foundation) is complete; Phase 1 (intelligence building — promoter database, signal engine, catalyst scorer, briefs) is in progress; Phase 2 (live execution validation at reduced size via Alpaca) is pending the data-tier upgrade; Phase 3 (full two-strategy system on IBKR) is pending Phase 2 results. See the phased checklist in `README.md` for the per-phase exit criteria.
 
 ## Data Tier Upgrade Before Phase 2
 
