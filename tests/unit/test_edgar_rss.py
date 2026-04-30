@@ -39,7 +39,8 @@ def test_is_small_exchange_matches_targets_case_insensitive() -> None:
     assert _is_small_exchange("OTC") is True
     assert _is_small_exchange("otc") is True
     assert _is_small_exchange("NYSE MKT") is True
-    assert _is_small_exchange("Nasdaq") is False
+    assert _is_small_exchange("Nasdaq") is True  # added in Nasdaq-CM expansion
+    assert _is_small_exchange("NYSE") is False   # large-cap NYSE still excluded
     assert _is_small_exchange(None) is False
 
 

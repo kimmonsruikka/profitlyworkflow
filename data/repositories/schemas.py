@@ -72,6 +72,18 @@ class PromoterNetworkEdgeSchema(_Schema):
     filing_references: list[Any] = []
 
 
+class UnderwriterSchema(_Schema):
+    underwriter_id: uuid.UUID
+    name: str
+    type: str | None = None
+    first_seen_edgar: datetime | None = None
+    ncm_listing_count: int = 0
+    manipulation_flagged: bool = False
+    flag_source: str | None = None
+    notes: str | None = None
+    created_at: datetime | None = None
+
+
 class PromoterFingerprint(BaseModel):
     """Aggregate stats describing how a promoter's campaigns typically behave."""
 

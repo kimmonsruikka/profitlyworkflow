@@ -111,14 +111,36 @@ EDGAR_RSS_FETCH_COUNT = 100     # max items per poll, per form type
 # Universe seeding stays wider than the tradeable float cap so we keep
 # borderline companies in view if they cross the threshold later.
 EDGAR_UNIVERSE_FLOAT_MAX = 15_000_000
-EDGAR_UNIVERSE_TARGET_SIZE = 1000
-EDGAR_SMALL_EXCHANGES = ("OTC", "Pink", "OTCBB", "NYSE MKT", "NYSE American")
+EDGAR_UNIVERSE_TARGET_SIZE = 5000
+# "Nasdaq" includes Capital Market, Global Market, and Global Select tiers
+# in SEC's master JSON — we accept all three at seed time and rely on the
+# float_updater to narrow to genuine micro-caps (float ≤ FLOAT_MAX).
+EDGAR_SMALL_EXCHANGES = (
+    "OTC", "Pink", "OTCBB",
+    "NYSE MKT", "NYSE American",
+    "Nasdaq",
+)
 
 # Forms to monitor on every poll, ordered by priority.
-EDGAR_PRIORITY_FORMS = ("8-K", "S-1", "S-3", "4")
+EDGAR_PRIORITY_FORMS = (
+    "8-K",       # event-driven catalyst (most relevant in our window)
+    "S-1",       # initial registration
+    "S-3",       # shelf registration (dilution overhang signal)
+    "4",         # insider transactions (Form 4)
+    "DEF 14A",   # proxy — reverse-split votes live here
+    "SC 13G",    # passive 5%+ ownership disclosures
+    "NT 10-K",   # late annual filing — distress signal
+    "NT 10-Q",   # late quarterly filing — distress signal
+)
 # Items 8.01 (other events) and 2.02 (results of operations) are the
-# catalyst-relevant slots inside an 8-K.
-EDGAR_8K_PRIORITY_ITEMS = ("8.01", "2.02")
+# catalyst-relevant slots inside an 8-K. The rest are Phase-1 additions:
+#   5.03 — amendments to articles (reverse splits, share-class changes)
+#   3.02 — unregistered equity sales (private placements / dilution)
+#   1.01 — material agreement entry (IR firm hires, underwriter contracts)
+#   7.01 — Reg FD disclosure (investor presentations, conference invites)
+EDGAR_8K_PRIORITY_ITEMS = (
+    "8.01", "2.02", "5.03", "3.02", "1.01", "7.01",
+)
 
 # ---------------------------------------------------------------------------
 # POLYGON.IO (rebranded as Massive.com Oct 2025; SDK + key unchanged)
