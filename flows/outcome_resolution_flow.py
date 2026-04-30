@@ -24,11 +24,12 @@ Deploy with (Prefect 3):
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Iterable, Protocol, runtime_checkable
+from typing import Iterable, Literal, Protocol, runtime_checkable
 
+from loguru import logger as _logger
 from prefect import flow, get_run_logger, task
 
 from config import constants
@@ -51,22 +52,42 @@ class PriceBar:
     high: float
     low: float
     close: float
+    volume: int | None = None
+
+
+@dataclass(frozen=True)
+class OHLCVResult:
+    """Return value of PriceSource.get_ohlcv.
+
+    `is_complete` is the gate the resolver uses to decide WIN/LOSS/NEUTRAL
+    vs. INVALID-with-insufficient-bars. `missing_ranges` are subranges
+    Polygon couldn't fill (404 / NoData / network).
+    """
+
+    bars: list[PriceBar]
+    source: Literal["cache", "polygon", "mixed"] = "polygon"
+    missing_ranges: list[tuple[datetime, datetime]] = field(default_factory=list)
+    is_complete: bool = True
 
 
 @runtime_checkable
 class PriceSource(Protocol):
     """Minimal contract the resolver needs.
 
-    Real impl lives behind PolygonClient (already in repo) — this flow
-    receives whatever conforms to the shape so tests can pass a list-
-    backed fake.
+    `get_ohlcv` takes a granularity ('1m' / '5m') and returns a structured
+    OHLCVResult so the resolver can branch on completeness without
+    re-running the bar-count math.
     """
 
     name: str  # e.g. "polygon", "test-fake" — recorded on the outcome row
 
     def get_ohlcv(
-        self, ticker: str, start: datetime, end: datetime
-    ) -> list[PriceBar]:
+        self,
+        ticker: str,
+        start: datetime,
+        end: datetime,
+        granularity: str = "1m",
+    ) -> OHLCVResult:
         ...
 
 
@@ -150,6 +171,13 @@ def compute_outcome_metrics(
     }
 
 
+def _select_granularity(window_minutes: int) -> str:
+    rules = constants.PRICE_GRANULARITY_RULES
+    if window_minutes <= rules["short_window_max_minutes"]:
+        return rules["short_granularity"]
+    return rules["long_granularity"]
+
+
 # ---------------------------------------------------------------------------
 # Resolver — pure business logic, takes a session + price source.
 # ---------------------------------------------------------------------------
@@ -158,19 +186,74 @@ async def resolve_one(
     prediction: PredictionRead,
     price_source: PriceSource,
 ) -> uuid.UUID | None:
-    """Compute the outcome row for one matured prediction. Returns outcome_id."""
+    """Compute the outcome row for one matured prediction.
+
+    Returns the outcome_id when an outcome row is written. Returns None
+    on transient errors so the prediction stays unresolved and gets
+    retried on the next flow run.
+    """
+    # Local imports avoid the polygon SDK at module-import time. CI runs
+    # without POLYGON_API_KEY and the polygon errors are only inspected
+    # when an actual price-source call raised them.
+    from ingestion.market_data.polygon_client import (
+        PolygonNoDataError,
+        PolygonNotFoundError,
+    )
+
     window_close = prediction.created_at + timedelta(
         minutes=prediction.predicted_window_minutes
     )
-    bars = list(price_source.get_ohlcv(
-        prediction.ticker, prediction.created_at, window_close
-    ))
+    granularity = _select_granularity(prediction.predicted_window_minutes)
+    outcomes = OutcomesRepository(session)
+    predictions = PredictionsRepository(session)
 
+    # ---- Fetch price data, branch on what came back ----
+    try:
+        result: OHLCVResult = await _maybe_await(
+            price_source.get_ohlcv(
+                prediction.ticker,
+                prediction.created_at,
+                window_close,
+                granularity,
+            )
+        )
+    except (PolygonNotFoundError, PolygonNoDataError):
+        # Ticker doesn't exist on Polygon, or no bars in the entire
+        # window. Both are legitimate INVALID outcomes — the prediction
+        # was made on something we can't measure.
+        written = await outcomes.write_invalid_outcome(
+            prediction.prediction_id,
+            window_close_at=window_close,
+            reason=constants.INVALID_REASONS["NO_PRICE_DATA"],
+            price_data_source=price_source.name,
+        )
+        await predictions.attach_outcome(prediction.prediction_id, written.outcome_id)
+        return written.outcome_id
+    except Exception:
+        # Transient — leave the prediction unresolved for the next sweep.
+        _logger.exception(
+            "resolve_one transient error for prediction {}", prediction.prediction_id,
+        )
+        return None
+
+    if not result.is_complete:
+        # Polygon returned data but not enough of it. INVALID with a
+        # different reason so the dashboard can group these separately.
+        written = await outcomes.write_invalid_outcome(
+            prediction.prediction_id,
+            window_close_at=window_close,
+            reason=constants.INVALID_REASONS["INSUFFICIENT_BARS"],
+            price_data_source=price_source.name,
+        )
+        await predictions.attach_outcome(prediction.prediction_id, written.outcome_id)
+        return written.outcome_id
+
+    # ---- Happy path: compute metrics, classify, write outcome ----
     target = (
         float(prediction.predicted_target_pct)
         if prediction.predicted_target_pct is not None else None
     )
-    metrics = compute_outcome_metrics(bars, target_pct=target)
+    metrics = compute_outcome_metrics(result.bars, target_pct=target)
 
     label = classify_outcome(
         realized_return_pct=metrics["realized_return_pct"],
@@ -178,7 +261,6 @@ async def resolve_one(
         hit_stop=metrics["hit_stop"],
     )
 
-    outcomes = OutcomesRepository(session)
     payload = OutcomeCreate(
         prediction_id=prediction.prediction_id,
         window_close_at=window_close,
@@ -192,10 +274,22 @@ async def resolve_one(
         price_data_source=price_source.name,
     )
     written = await outcomes.create(payload)
-
-    predictions = PredictionsRepository(session)
     await predictions.attach_outcome(prediction.prediction_id, written.outcome_id)
     return written.outcome_id
+
+
+async def _maybe_await(value):
+    """Accept either a sync or async PriceSource.get_ohlcv return.
+
+    Tests use a sync FakePriceSource (returns OHLCVResult directly);
+    PolygonCachedPriceSource is async (returns a coroutine). Resolver
+    accepts either shape.
+    """
+    import inspect as _inspect
+
+    if _inspect.isawaitable(value):
+        return await value
+    return value
 
 
 def _to_decimal(value: float | None) -> Decimal | None:

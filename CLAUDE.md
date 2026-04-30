@@ -70,6 +70,9 @@ The codebase is organized in thin layers: ingestion (EDGAR, Polygon, Benzinga, s
 - **`FEATURE_SCHEMA_VERSION` (in `config/constants.py`) MUST be bumped whenever the feature vector definition changes.** Old predictions remain valid under their original schema; new predictions use the new version. Cross-version comparisons during scorer graduation respect this pinning.
 - **Probability-shaped scores only — `[0.0, 1.0]` floats.** This is a *format* invariant: every scorer's `ScoreResult.probability` is a float in `[0.0, 1.0]`. Do not introduce 0–100 scoring anywhere in the internal pipeline. Convert to integer percentages only in alert formatters at presentation time. *Calibration* (the empirical property that confidence 0.7 means a ~70% realized hit rate) is a separate concern and a graduation milestone, **not** an invariant of every scorer. Rules-v1 is uncalibrated by design — its `ScoreResult.uncalibrated_warning` is `True`. Future scorers flip that flag to `False` only after passing Brier / ECE validation. Alert formatters may use the flag to suppress "78% confidence" framing on uncalibrated scores. (The legacy `signals.confidence_score` / `CONFIDENCE_THRESHOLD_S1=65` constants are part of the existing gatekeeper layer and predate the predictions-table loop; do not migrate them in this PR.)
 - **"Outcome resolution" is the term for closing matured predictions.** Do not use "attribution" — that term is reserved for SHAP-style feature attribution which the eventual GBDT will produce separately.
+- **Price-data fetches go through `PolygonCachedPriceSource`.** Direct `polygon-api-client` calls outside `ingestion/market_data/` are prohibited — they bypass the TimescaleDB cache and the rate limiter, double-spend the Starter quota, and silently diverge from the data the resolution flow already saw.
+- **Outcomes with `label='INVALID'` MUST have a populated `invalid_reason`.** Use the named constants in `INVALID_REASONS` in `config/constants.py` — the repo's `OutcomesRepository.create()` enforces this at write time. No freeform reason strings.
+- **The resolution flow does not write outcomes on transient errors.** Network/5xx/unknown exceptions leave the prediction unresolved; the next flow run retries it. Only `PolygonNotFoundError`, `PolygonNoDataError`, or `is_complete=False` from the cached price source produce an `INVALID` outcome row.
 
 ## Key Files to Understand First
 
@@ -82,6 +85,9 @@ The codebase is organized in thin layers: ingestion (EDGAR, Polygon, Benzinga, s
 - `signals/engine.py` — `SignalEngine.evaluate()`; the chokepoint that writes the prediction row before any alert
 - `flows/outcome_resolution_flow.py` — outcome closer, hourly + 17:00 ET sweep; `PriceSource` Protocol injection point
 - `data/repositories/predictions_repo.py` — prediction CRUD + `get_unresolved_matured()` query the resolver walks
+- `ingestion/market_data/polygon_price_source.py` — `PolygonCachedPriceSource`, the cache-merge logic, gap detection
+- `ingestion/market_data/polygon_client.py` — async wrapper around the polygon-api-client SDK; `get_aggregates()` is the entry the cached source uses
+- `utils/market_calendar.py` — minimal NYSE calendar (weekdays + hardcoded holidays) for `expected_bar_count`
 
 ## Database
 

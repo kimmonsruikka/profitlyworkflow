@@ -99,16 +99,30 @@ def test_compute_metrics_zero_entry_returns_none_fields():
 # ---------------------------------------------------------------------------
 # PriceSource Protocol — fake implementation for end-to-end tests
 # ---------------------------------------------------------------------------
+from flows.outcome_resolution_flow import OHLCVResult
+
+
 class FakePriceSource:
     name = "test-fake"
 
-    def __init__(self, bars: list[PriceBar]) -> None:
+    def __init__(self, bars: list[PriceBar], *, is_complete: bool = True) -> None:
         self._bars = bars
-        self.calls: list[tuple[str, datetime, datetime]] = []
+        self._is_complete = is_complete
+        self.calls: list[tuple[str, datetime, datetime, str]] = []
 
-    def get_ohlcv(self, ticker: str, start: datetime, end: datetime) -> list[PriceBar]:
-        self.calls.append((ticker, start, end))
-        return list(self._bars)
+    def get_ohlcv(
+        self,
+        ticker: str,
+        start: datetime,
+        end: datetime,
+        granularity: str = "1m",
+    ) -> OHLCVResult:
+        self.calls.append((ticker, start, end, granularity))
+        return OHLCVResult(
+            bars=list(self._bars),
+            source="cache" if self._bars else "polygon",
+            is_complete=self._is_complete,
+        )
 
 
 def test_fake_price_source_satisfies_protocol():

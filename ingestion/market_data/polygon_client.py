@@ -26,6 +26,15 @@ class PolygonNotFoundError(Exception):
     """Polygon returned 404 / "ticker does not exist"."""
 
 
+class PolygonNoDataError(Exception):
+    """Polygon accepted the ticker but returned an empty bar set for the range.
+
+    Distinct from PolygonNotFoundError — the ticker exists, but there's no
+    price data for the window we asked for. Common on illiquid OTC names
+    that didn't trade during the window.
+    """
+
+
 def _is_not_found(exc: Exception) -> bool:
     """Detect 404-equivalent errors from polygon-api-client."""
     text = repr(exc).lower()
@@ -157,3 +166,78 @@ class PolygonClient:
             }
             for b in (bars or [])
         ]
+
+
+# ---------------------------------------------------------------------------
+# get_aggregates — granularity-keyed entry the cached price-source uses.
+# ---------------------------------------------------------------------------
+_GRANULARITY_MAP: dict[str, tuple[int, str]] = {
+    "1m": (1, "minute"),
+    "5m": (5, "minute"),
+    "15m": (15, "minute"),
+    "1h": (1, "hour"),
+    "1d": (1, "day"),
+}
+
+
+def _polygon_ts_to_datetime(ts: int | None) -> "datetime | None":
+    """Polygon emits epoch ms; we want tz-aware UTC."""
+    from datetime import datetime as _dt
+    from datetime import timezone as _tz
+    if ts is None:
+        return None
+    return _dt.fromtimestamp(ts / 1000.0, tz=_tz.utc)
+
+
+async def _aggregates_call(
+    self: "PolygonClient",
+    ticker: str,
+    start: "datetime",
+    end: "datetime",
+    granularity: str,
+) -> list[dict[str, Any]]:
+    """Fetch bars for [start, end] at the given granularity.
+
+    Returns dict bars with tz-aware UTC timestamps. Raises:
+      PolygonNotFoundError — ticker doesn't exist
+      PolygonNoDataError   — ticker exists but no bars in window
+    """
+    if granularity not in _GRANULARITY_MAP:
+        raise ValueError(
+            f"unsupported granularity {granularity!r} — pick from "
+            f"{sorted(_GRANULARITY_MAP)}"
+        )
+    multiplier, timespan = _GRANULARITY_MAP[granularity]
+
+    bars = await self._call(
+        self._client.get_aggs,
+        ticker,
+        multiplier,
+        timespan,
+        start.isoformat(),
+        end.isoformat(),
+    )
+    if not bars:
+        # Polygon returned [] — ticker exists but no trades in the window.
+        raise PolygonNoDataError(
+            f"polygon returned no bars for {ticker} {start} → {end} ({granularity})"
+        )
+
+    return [
+        {
+            "ticker": ticker,
+            "granularity": granularity,
+            "open": getattr(b, "open", None),
+            "high": getattr(b, "high", None),
+            "low": getattr(b, "low", None),
+            "close": getattr(b, "close", None),
+            "volume": getattr(b, "volume", None),
+            "vwap": getattr(b, "vwap", None),
+            "timestamp": _polygon_ts_to_datetime(getattr(b, "timestamp", None)),
+        }
+        for b in bars
+    ]
+
+
+# Bind the function to the class so callers can do `client.get_aggregates(...)`.
+PolygonClient.get_aggregates = _aggregates_call  # type: ignore[attr-defined]

@@ -45,6 +45,7 @@ class Outcome(Base):
     hit_stop: Mapped[bool | None] = mapped_column(Boolean)
     outcome_label: Mapped[str] = mapped_column(String(20), nullable=False)
     price_data_source: Mapped[str] = mapped_column(String(40), nullable=False)
+    invalid_reason: Mapped[str | None] = mapped_column(String(50))
 
     def __repr__(self) -> str:
         return (
