@@ -200,10 +200,10 @@ MSG
 
 
 # ---------------------------------------------------------------------------
-# Step 8 — Install systemd units (trading-app, edgar-watcher)
+# Step 8 — Install systemd units (trading-app, edgar-watcher, celery-worker)
 # ---------------------------------------------------------------------------
 step_8() {
-    banner "Step 8: install trading-app + edgar-watcher systemd units"
+    banner "Step 8: install trading-app + edgar-watcher + celery-worker systemd units"
 
     cat >/etc/systemd/system/trading-app.service <<MSG
 [Unit]
@@ -231,35 +231,42 @@ ReadWritePaths=$APP_DIR
 WantedBy=multi-user.target
 MSG
 
-    # edgar-watcher unit lives in the repo so deploys can update it.
-    if [[ -f "$APP_DIR/deploy/edgar-watcher.service" ]]; then
-        cp "$APP_DIR/deploy/edgar-watcher.service" /etc/systemd/system/edgar-watcher.service
-    else
-        echo "WARN: $APP_DIR/deploy/edgar-watcher.service not found — skipping" >&2
-    fi
+    # Repo-managed units (edits ship via git push, not manual scp).
+    for unit in edgar-watcher.service celery-worker.service; do
+        if [[ -f "$APP_DIR/deploy/$unit" ]]; then
+            cp "$APP_DIR/deploy/$unit" "/etc/systemd/system/$unit"
+        else
+            echo "WARN: $APP_DIR/deploy/$unit not found — skipping" >&2
+        fi
+    done
 
     systemctl daemon-reload
     systemctl enable trading-app
     systemctl start trading-app
-    if [[ -f /etc/systemd/system/edgar-watcher.service ]]; then
-        systemctl enable edgar-watcher
-        systemctl start edgar-watcher
-    fi
+    for unit in edgar-watcher celery-worker; do
+        if [[ -f "/etc/systemd/system/$unit.service" ]]; then
+            systemctl enable "$unit"
+            systemctl start "$unit"
+        fi
+    done
     sleep 2
     systemctl status trading-app --no-pager | head -10
     echo
     systemctl status edgar-watcher --no-pager 2>/dev/null | head -10 || true
+    echo
+    systemctl status celery-worker --no-pager 2>/dev/null | head -10 || true
     cat <<MSG
 
 Expected output:
-  - 'Active: active (running)' for trading-app.
-  - 'Active: active (running)' for edgar-watcher (only after step 6 + .env.production are done).
-  - User=$APP_USER on both (NOT root).
+  - 'Active: active (running)' for trading-app, edgar-watcher, celery-worker.
+  - User=$APP_USER on all three (NOT root).
   - trading-app listens on 127.0.0.1:8000 (verify: ss -tlnp | grep 8000).
+  - celery-worker connects to Redis at REDIS_URL and starts consuming
+    the 'default' queue.
 
 Note: edgar-watcher will log warnings until you run the universe seed
-(scripts/seed_edgar_universe.py — ships in the next PR) and set
-SEC_USER_AGENT in .env.production.
+(scripts/seed_cik_universe.py) and set SEC_USER_AGENT in .env.production.
+celery-worker will only do useful work once the watcher enqueues filings.
 MSG
 }
 
