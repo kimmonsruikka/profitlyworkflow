@@ -53,7 +53,7 @@ The promoter knowledge base maps every IR firm, attorney, transfer agent, and au
 DATA LAYER
 ├── EDGAR RSS Watcher          Real-time 8-K / S-1 / S-3 / Form 4 / DEF 14A
 ├── [SEC-API.io](http://SEC-API.io) Parser          Structured extraction from raw filings
-├── [Polygon.io](http://Polygon.io)                 Real-time and historical price / volume / quotes
+├── [Polygon.io](http://Polygon.io) Starter         Historical OHLCV, cached in TimescaleDB hypertable
 ├── Benzinga Pro API           Real-time news and catalyst feed
 ├── Ortex                      Short interest, days to cover, borrow rate
 ├── Telegram (Telethon)        Primary social signal — pump-group monitoring
@@ -124,7 +124,9 @@ Three tables anchor the loop:
 - **`outcomes`** — one per resolved prediction (UNIQUE constraint). MFE, MAE, realized return (and counterfactual paper return), `hit_target` / `hit_stop` flags, and a `WIN` / `LOSS` / `NEUTRAL` / `INVALID` label derived from `OUTCOME_LABEL_RULES` in `config/constants.py`.
 - **`model_versions`** — catalog of every scorer that has ever written predictions. `in_production = TRUE` for the writer of new predictions; `in_shadow = TRUE` for candidate models running alongside but not driving alerts.
 
-The **outcome resolution flow** runs hourly during market hours plus a 17:00 ET sweep. It walks `predictions WHERE outcome_id IS NULL AND created_at + window <= now()`, pulls OHLCV for each window, computes the metrics, and writes the outcome row. Price-data fetch is behind a `PriceSource` Protocol so the flow tests cleanly with a fake series and Polygon wires in via the same interface.
+The **outcome resolution flow** runs hourly during market hours plus a 17:00 ET sweep. It walks `predictions WHERE outcome_id IS NULL AND created_at + window <= now()`, pulls OHLCV for each window, computes the metrics, and writes the outcome row. Price data is fetched through a Polygon-backed `PriceSource` with TimescaleDB caching — the cache is read first, gaps are filled from Polygon, and Polygon responses are written back so the same window costs one call ever. Granularity is chosen per prediction window length: **1-minute bars for windows ≤ 1 day, 5-minute bars for longer**.
+
+Predictions on tickers without Polygon coverage are resolved as **`INVALID`** with a structured `invalid_reason` (`no_price_data`, `insufficient_bars`, `polygon_error`) — they're not silently dropped. Transient network errors leave the prediction unresolved so the next sweep retries it.
 
 **Scorer graduation path:**
 
@@ -692,4 +694,4 @@ Short-term trading gains are taxed as ordinary income. At typical marginal rates
 
 ---
 
-*Last updated: Phase 0 complete — learning architecture foundation laid.*
+*Last updated: Phase 0 → Phase 1 transition — outcome resolution wired to live price data.*

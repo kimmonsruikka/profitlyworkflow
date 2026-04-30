@@ -173,6 +173,39 @@ POLYGON_REQUESTS_PER_MINUTE = 5
 POLYGON_HTTP_TIMEOUT_SECONDS = 30
 POLYGON_FLOAT_BATCH_PROGRESS_INTERVAL = 50  # report every N tickers in update_floats
 
+# Burst-rate cap for the cached price-source's get_ohlcv path. Coexists
+# with POLYGON_REQUESTS_PER_MINUTE — the per-minute throttle is still the
+# binding constraint on the Starter plan. This per-second value gates a
+# concurrency semaphore so we never fire >N parallel requests in one
+# instant even if the per-minute budget allows it (e.g. after a real-time
+# tier upgrade).
+POLYGON_RATE_LIMIT_PER_SECOND = 5
+POLYGON_FETCH_TIMEOUT_SECONDS = 30
+
+# Granularity selection per prediction window length. Short windows
+# need the resolution; long windows would hit Polygon row-count limits
+# at 1m granularity.
+PRICE_GRANULARITY_RULES = {
+    "short_window_max_minutes": 1440,   # ≤ 1 day uses 1m bars
+    "short_granularity": "1m",
+    "long_granularity": "5m",
+}
+
+# Resolution flow marks an outcome INVALID when fewer than this fraction
+# of expected bars are present in the window. Tunable after first real-
+# data observations — low-float OTC names trade in bursts and may have
+# legitimate gaps.
+PRICE_DATA_COMPLETENESS_THRESHOLD = 0.50
+
+# Reasons the resolution flow may write outcome_label='INVALID'. Free-
+# form strings here are forbidden by the CLAUDE.md critical rules — use
+# the named constants so the dashboard can group by reason.
+INVALID_REASONS = {
+    "NO_PRICE_DATA": "no_price_data",
+    "INSUFFICIENT_BARS": "insufficient_bars",
+    "POLYGON_ERROR": "polygon_error",
+}
+
 # ---------------------------------------------------------------------------
 # EXPONENTIAL WEIGHTING (months)
 # ---------------------------------------------------------------------------

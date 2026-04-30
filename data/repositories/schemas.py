@@ -252,6 +252,7 @@ class OutcomeCreate(BaseModel):
     hit_stop: bool | None = None
     outcome_label: str
     price_data_source: str
+    invalid_reason: str | None = None
 
 
 class OutcomeRead(_Schema):
@@ -267,6 +268,7 @@ class OutcomeRead(_Schema):
     hit_stop: bool | None = None
     outcome_label: str
     price_data_source: str
+    invalid_reason: str | None = None
 
 
 class ModelVersionRead(_Schema):

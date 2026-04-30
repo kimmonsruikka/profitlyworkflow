@@ -9,11 +9,17 @@ from data.models.base import Base
 
 
 class PriceData(Base):
-    """TimescaleDB hypertable. Composite PK on (ticker, timestamp)."""
+    """TimescaleDB hypertable. Composite PK on (ticker, granularity, timestamp).
+
+    `granularity` ('1m' / '5m' / '15m' / '1h' / '1d') was added in
+    migration 0007 so the same ticker can have multiple granularities
+    cached. Existing rows pre-0007 backfilled to '1m'.
+    """
 
     __tablename__ = "price_data"
 
     ticker: Mapped[str] = mapped_column(String(10), primary_key=True)
+    granularity: Mapped[str] = mapped_column(String(10), primary_key=True)
     timestamp: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), primary_key=True
     )
@@ -28,6 +34,6 @@ class PriceData(Base):
 
     def __repr__(self) -> str:
         return (
-            f"<PriceData {self.ticker} {self.timestamp} close={self.close} "
-            f"vol={self.volume}>"
+            f"<PriceData {self.ticker} {self.granularity} {self.timestamp} "
+            f"close={self.close} vol={self.volume}>"
         )

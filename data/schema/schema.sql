@@ -223,6 +223,7 @@ CREATE TABLE IF NOT EXISTS account_state (
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS price_data (
     ticker          VARCHAR(10) NOT NULL,
+    granularity     VARCHAR(10) NOT NULL,
     timestamp       TIMESTAMPTZ NOT NULL,
     open            NUMERIC(10,4),
     high            NUMERIC(10,4),
@@ -232,7 +233,7 @@ CREATE TABLE IF NOT EXISTS price_data (
     vwap            NUMERIC(10,4),
     spread_pct      NUMERIC(8,6),
     liquidity_score NUMERIC(5,2),
-    PRIMARY KEY (ticker, timestamp)
+    PRIMARY KEY (ticker, granularity, timestamp)
 );
 
 SELECT create_hypertable(
@@ -240,6 +241,10 @@ SELECT create_hypertable(
     chunk_time_interval => INTERVAL '1 day',
     if_not_exists => TRUE
 );
+
+-- "Most-recent first" lookup index for cache range queries.
+CREATE INDEX IF NOT EXISTS idx_price_data_lookup
+    ON price_data (ticker, granularity, "timestamp" DESC);
 
 -- ---------------------------------------------------------------------------
 -- Indexes
@@ -337,6 +342,7 @@ CREATE TABLE IF NOT EXISTS outcomes (
     hit_stop                      BOOLEAN,
     outcome_label                 VARCHAR(20) NOT NULL,
     price_data_source             VARCHAR(40) NOT NULL,
+    invalid_reason                VARCHAR(50),
     UNIQUE (prediction_id)
 );
 
