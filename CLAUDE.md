@@ -20,10 +20,15 @@ Complete:
 - 110+ filings processed
 
 Next:
-- StockTwits social velocity monitoring
+- Telegram pump-group monitoring (Telethon, primary social signal)
+- Reddit (PRAW) async sentiment batch
 - SEC enforcement case mining (promoter DB)
-- Catalyst scorer
+- FinBERT + Claude Haiku hybrid sentiment classifier implementations
 - Daily brief generators
+
+StockTwits is **deferred** (their public API is closed to new
+registrations as of 2026); revisit only after Telegram + Reddit prove
+insufficient.
 
 **Key decisions**
 - OTC edge → social APIs + promoter network
@@ -60,14 +65,23 @@ The codebase is organized in thin layers: ingestion (EDGAR, Polygon, Benzinga, s
 - **Paper trade outcomes must be tagged with one of:** `USER_DECLINED`, `SIGNAL_EXPIRED`, or `SYSTEM_PAPER`. Use `PaperTradeEngine.record_outcome()`.
 - **Never commit `.env` files.** Only `.env.example` is tracked. The `.gitignore` excludes `.env` and `.env.*` (but allows `.env.example`).
 - **All magic numbers belong in `config/constants.py`.** No inline thresholds, percentages, or time windows anywhere else.
+- **Every signal evaluation MUST write a `predictions` row before any alert fires.** Use `SignalEngine.evaluate()` — never call the scorer directly from alert code paths. The prediction row is written whether or not an alert fires; that's the point.
+- **Predictions are immutable once written.** To "correct" a prediction, write a new prediction with a reference to the prior in `feature_vector.supersedes`. The only writable columns post-creation are `user_decision`, `decision_reason`, `trade_id`, and `outcome_id`.
+- **`FEATURE_SCHEMA_VERSION` (in `config/constants.py`) MUST be bumped whenever the feature vector definition changes.** Old predictions remain valid under their original schema; new predictions use the new version. Cross-version comparisons during scorer graduation respect this pinning.
+- **Probability-shaped scores only — `[0.0, 1.0]` floats.** This is a *format* invariant: every scorer's `ScoreResult.probability` is a float in `[0.0, 1.0]`. Do not introduce 0–100 scoring anywhere in the internal pipeline. Convert to integer percentages only in alert formatters at presentation time. *Calibration* (the empirical property that confidence 0.7 means a ~70% realized hit rate) is a separate concern and a graduation milestone, **not** an invariant of every scorer. Rules-v1 is uncalibrated by design — its `ScoreResult.uncalibrated_warning` is `True`. Future scorers flip that flag to `False` only after passing Brier / ECE validation. Alert formatters may use the flag to suppress "78% confidence" framing on uncalibrated scores. (The legacy `signals.confidence_score` / `CONFIDENCE_THRESHOLD_S1=65` constants are part of the existing gatekeeper layer and predate the predictions-table loop; do not migrate them in this PR.)
+- **"Outcome resolution" is the term for closing matured predictions.** Do not use "attribution" — that term is reserved for SHAP-style feature attribution which the eventual GBDT will produce separately.
 
 ## Key Files to Understand First
 
-- `config/constants.py` — every threshold, percentage, time window, and parameter
+- `config/constants.py` — every threshold, percentage, time window, and parameter (incl. `FEATURE_SCHEMA_VERSION`, `OUTCOME_LABEL_RULES`)
 - `config/settings.py` — environment configuration, the `is_live_trading` safety gate, loguru setup
 - `risk/gatekeeper.py` — every order passes through `check_all()`; rule names live in `Rules`
 - `execution/broker/base.py` — the `BrokerClient` abstract interface contract
 - `data/schema/schema.sql` — source of truth for the data model (TimescaleDB hypertable on `price_data`)
+- `signals/scoring/catalyst_scorer.py` — `CatalystScorer` abstract + `RulesV1Scorer` (Phase-1 in-production scorer)
+- `signals/engine.py` — `SignalEngine.evaluate()`; the chokepoint that writes the prediction row before any alert
+- `flows/outcome_resolution_flow.py` — outcome closer, hourly + 17:00 ET sweep; `PriceSource` Protocol injection point
+- `data/repositories/predictions_repo.py` — prediction CRUD + `get_unresolved_matured()` query the resolver walks
 
 ## Database
 
