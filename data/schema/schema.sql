@@ -77,6 +77,24 @@ CREATE TABLE IF NOT EXISTS promoter_network_edges (
 );
 
 -- ---------------------------------------------------------------------------
+-- underwriters — Nasdaq Capital Market equivalent of promoter_entities.
+-- Tracks the placement-agent / underwriter network behind small-cap IPOs
+-- and follow-on offerings. manipulation_flagged identifies entities named
+-- in regulatory or investigative reporting.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS underwriters (
+    underwriter_id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name                    TEXT NOT NULL,
+    type                    VARCHAR(50),
+    first_seen_edgar        TIMESTAMPTZ,
+    ncm_listing_count       INTEGER DEFAULT 0,
+    manipulation_flagged    BOOLEAN DEFAULT FALSE,
+    flag_source             TEXT,
+    notes                   TEXT,
+    created_at              TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ---------------------------------------------------------------------------
 -- sec_filings
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS sec_filings (
@@ -94,6 +112,7 @@ CREATE TABLE IF NOT EXISTS sec_filings (
     form4_insider_buy       BOOLEAN DEFAULT FALSE,
     full_text               JSONB DEFAULT '{}',
     processed               BOOLEAN DEFAULT FALSE,
+    underwriter_id          UUID REFERENCES underwriters(underwriter_id),
     created_at              TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -232,6 +251,10 @@ CREATE INDEX IF NOT EXISTS idx_promoter_network_edges_b          ON promoter_net
 
 CREATE INDEX IF NOT EXISTS idx_sec_filings_filed_processed       ON sec_filings(filed_at, processed);
 CREATE INDEX IF NOT EXISTS idx_sec_filings_ticker_form           ON sec_filings(ticker, form_type);
+CREATE INDEX IF NOT EXISTS idx_sec_filings_underwriter           ON sec_filings(underwriter_id);
+
+CREATE INDEX IF NOT EXISTS idx_underwriters_name                 ON underwriters(name);
+CREATE INDEX IF NOT EXISTS idx_underwriters_flagged              ON underwriters(manipulation_flagged);
 
 CREATE INDEX IF NOT EXISTS idx_signals_ticker_generated          ON signals(ticker, generated_at);
 CREATE INDEX IF NOT EXISTS idx_signals_outcome                   ON signals(outcome);

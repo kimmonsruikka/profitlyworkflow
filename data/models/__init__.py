@@ -12,6 +12,7 @@ from data.models.sec_filing import SecFiling
 from data.models.signal import Signal
 from data.models.ticker import Ticker
 from data.models.trade import Trade
+from data.models.underwriter import Underwriter
 
 __all__ = [
     "AccountState",
@@ -26,4 +27,5 @@ __all__ = [
     "Signal",
     "Ticker",
     "Trade",
+    "Underwriter",
 ]

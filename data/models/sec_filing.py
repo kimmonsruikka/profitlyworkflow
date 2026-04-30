@@ -3,7 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import Boolean, Index, Numeric, String, Text, func, text
+from sqlalchemy import Boolean, ForeignKey, Index, Numeric, String, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -15,6 +15,7 @@ class SecFiling(Base):
     __table_args__ = (
         Index("idx_sec_filings_filed_processed", "filed_at", "processed"),
         Index("idx_sec_filings_ticker_form", "ticker", "form_type"),
+        Index("idx_sec_filings_underwriter", "underwriter_id"),
     )
 
     filing_id: Mapped[uuid.UUID] = mapped_column(
@@ -37,6 +38,9 @@ class SecFiling(Base):
         JSONB, server_default=text("'{}'::jsonb")
     )
     processed: Mapped[bool] = mapped_column(Boolean, default=False)
+    underwriter_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("underwriters.underwriter_id")
+    )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now()
     )

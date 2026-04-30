@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import urllib.parse
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from typing import Iterable
@@ -53,10 +54,15 @@ def _sec_headers() -> dict[str, str]:
 
 
 def _build_rss_url(form_type: str) -> str:
-    """EDGAR's getcurrent endpoint returns an Atom feed of recent filings."""
+    """EDGAR's getcurrent endpoint returns an Atom feed of recent filings.
+
+    Form types like 'DEF 14A' and 'NT 10-K' contain spaces; quote() turns
+    them into 'DEF%2014A' / 'NT%2010-K' which EDGAR's getcurrent accepts.
+    """
+    encoded_form = urllib.parse.quote(form_type)
     return (
         f"{constants.EDGAR_RSS_URL}"
-        f"?action=getcurrent&type={form_type}"
+        f"?action=getcurrent&type={encoded_form}"
         f"&company=&dateb=&owner=include"
         f"&count={constants.EDGAR_RSS_FETCH_COUNT}&output=atom"
     )
