@@ -54,6 +54,8 @@ async def test_ticker_for_ciks_empty_input_short_circuits():
 @pytest.mark.asyncio
 async def test_persist_and_queue_resolves_ticker_when_known(monkeypatch):
     """A filing whose CIK is in the tickers table is inserted with that ticker."""
+    from contextlib import asynccontextmanager
+
     from ingestion.edgar import rss_watcher as m
 
     delay_calls: list = []
@@ -71,9 +73,20 @@ async def test_persist_and_queue_resolves_ticker_when_known(monkeypatch):
             insert_calls.append(None)
         return result
 
+    # Outer session — used for read-only universe/dedupe lookups (mocked away
+    # below). The actual insert now goes through a per-filing get_session().
     session = MagicMock()
     session.execute = AsyncMock(side_effect=fake_execute)
     session.flush = AsyncMock()
+
+    insert_session = MagicMock()
+    insert_session.execute = AsyncMock(side_effect=fake_execute)
+
+    @asynccontextmanager
+    async def fake_get_session():
+        yield insert_session
+
+    monkeypatch.setattr(m, "get_session", fake_get_session)
 
     monkeypatch.setattr(
         m, "_existing_accessions", AsyncMock(return_value=set())
