@@ -115,11 +115,15 @@ async def test_polygon_not_found_raises_typed_error(polygon_stub, monkeypatch):
 # float_updater — universe filtering + deactivation
 # ---------------------------------------------------------------------------
 def _make_ticker(ticker: str, *, active: bool = True) -> MagicMock:
-    obj = MagicMock(spec=["ticker", "active", "float_shares", "shares_outstanding"])
+    obj = MagicMock(spec=[
+        "ticker", "active", "float_shares", "shares_outstanding",
+        "float_updated_at",
+    ])
     obj.ticker = ticker
     obj.active = active
     obj.float_shares = None
     obj.shares_outstanding = None
+    obj.float_updated_at = None
     return obj
 
 
