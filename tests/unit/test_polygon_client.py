@@ -141,6 +141,7 @@ async def test_float_under_cap_keeps_active_and_updates(polygon_stub, monkeypatc
     })
     session = MagicMock()
     session.flush = AsyncMock()
+    session.commit = AsyncMock()
 
     report = await fu.update_floats_for_universe(session, polygon)
     assert rows[0].active is True
@@ -164,6 +165,7 @@ async def test_float_over_10m_deactivates(polygon_stub, monkeypatch):
     })
     session = MagicMock()
     session.flush = AsyncMock()
+    session.commit = AsyncMock()
 
     report = await fu.update_floats_for_universe(session, polygon)
     assert rows[0].active is False
@@ -185,6 +187,7 @@ async def test_polygon_not_found_deactivates_ticker(polygon_stub, monkeypatch):
     polygon.get_ticker_details = AsyncMock(side_effect=PolygonNotFoundError("404"))
     session = MagicMock()
     session.flush = AsyncMock()
+    session.commit = AsyncMock()
 
     report = await fu.update_floats_for_universe(session, polygon)
     assert rows[0].active is False
@@ -204,6 +207,7 @@ async def test_network_error_keeps_active_for_retry(polygon_stub, monkeypatch):
     polygon.get_ticker_details = AsyncMock(side_effect=ConnectionError("timeout"))
     session = MagicMock()
     session.flush = AsyncMock()
+    session.commit = AsyncMock()
 
     report = await fu.update_floats_for_universe(session, polygon)
     assert rows[0].active is True
@@ -224,6 +228,7 @@ async def test_progress_callback_invoked_each_ticker(polygon_stub, monkeypatch):
     })
     session = MagicMock()
     session.flush = AsyncMock()
+    session.commit = AsyncMock()
 
     seen: list[tuple[int, int, str]] = []
     await fu.update_floats_for_universe(
