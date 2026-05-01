@@ -188,13 +188,17 @@ POLYGON_REQUESTS_PER_MINUTE = 5
 POLYGON_HTTP_TIMEOUT_SECONDS = 30
 POLYGON_FLOAT_BATCH_PROGRESS_INTERVAL = 50  # report every N tickers in update_floats
 
-# How often update_floats_for_universe flushes the SQLAlchemy session
-# during the sweep. Without this, the flush only happens once at the
-# end of the loop — meaning tickers.float_updated_at writes aren't
-# visible to other transactions for the full ~17h sweep duration.
-# 25 keeps the visibility window to ~5 minutes (25 × 12.6s ≈ 5m15s)
-# while bounding the rollback blast radius if the flow crashes mid-run.
-FLOAT_UPDATE_FLUSH_INTERVAL = 25
+# How often update_floats_for_universe COMMITS the SQLAlchemy session
+# during the sweep. A flush() pushes writes to the DB but they stay
+# inside the open transaction and aren't visible to other connections
+# until the final commit at session exit — meaning a 17h sweep keeps
+# all updates invisible until the very end, AND a Ctrl+C / crash mid-
+# run rolls back every in-flight update. Per-batch commit gives:
+#   - bounded rollback blast radius (≤25 rows lost on crash)
+#   - real-time visibility to other connections (acceptance query,
+#     dashboards, downstream feature consumers)
+# 25 keeps the visibility window to ~5 minutes (25 × 12.6s ≈ 5m15s).
+FLOAT_UPDATE_COMMIT_INTERVAL = 25
 
 # Per-ticker progress logging cadence inside the Prefect flow. The
 # manual operator script uses POLYGON_FLOAT_BATCH_PROGRESS_INTERVAL

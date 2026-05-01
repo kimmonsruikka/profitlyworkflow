@@ -173,10 +173,14 @@ async def update_floats_for_universe(
     progress_callback receives (visited_count, total_count, last_ticker)
     so callers can stream progress. None disables progress output.
 
-    Flushes every FLOAT_UPDATE_FLUSH_INTERVAL rows so partial progress
-    is visible to other transactions during the (~17h) sweep — without
-    it, the only flush is at the end of the loop and the DB looks
-    untouched until the entire universe finishes.
+    COMMITS every FLOAT_UPDATE_COMMIT_INTERVAL rows — not just flushes.
+    A flush pushes writes to the DB but keeps them inside the open
+    transaction, so other connections (operator psql shells, the
+    acceptance dashboard, etc.) can't see them until the entire ~17h
+    sweep finishes. A crash or Ctrl+C mid-flow ALSO rolls every
+    in-flight update back. Per-batch commit fixes both: bounded
+    rollback blast radius and real-time visibility. After commit() the
+    session auto-begins a new transaction on the next write.
     """
     active = await _load_active_tickers(session)
     report = FloatUpdateReport(total=len(active))
@@ -194,14 +198,14 @@ async def update_floats_for_universe(
         else:
             report.errors += 1
 
-        if idx % constants.FLOAT_UPDATE_FLUSH_INTERVAL == 0:
-            await session.flush()
+        if idx % constants.FLOAT_UPDATE_COMMIT_INTERVAL == 0:
+            await session.commit()
 
         if progress_callback:
             progress_callback(idx, report.total, row.ticker)
 
-    # Final flush catches the last partial batch.
-    await session.flush()
+    # Final commit catches the partial last batch.
+    await session.commit()
     logger.info("float update complete: {}", " | ".join(report.summary_lines()))
     return report
 
