@@ -9,6 +9,13 @@ User=trading
 Group=trading
 WorkingDirectory=/app/profitlyworkflow
 EnvironmentFile=/app/profitlyworkflow/.env.production
+# Celery's prefork SUBPROCESS workers don't inherit WorkingDirectory in a
+# way Python uses for sys.path resolution. Set PYTHONPATH explicitly so
+# `from signals.engine import SignalEngine` (and other project-package
+# imports) resolve inside task bodies. trading-app and edgar-watcher
+# don't need this — uvicorn and `python -m` auto-add cwd to sys.path,
+# but celery's worker invocation doesn't.
+Environment="PYTHONPATH=/app/profitlyworkflow"
 ExecStart=/app/profitlyworkflow/venv/bin/celery -A flows.celery_app worker --loglevel=info --concurrency=2
 Restart=always
 RestartSec=10
