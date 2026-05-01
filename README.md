@@ -666,9 +666,28 @@ sudo -u trading bash -c '
 |---|---|
 | `reprocess_unprocessed_filings.py` | Drains backlogs of `sec_filings` rows stuck at `processed=False` by re-dispatching `process_filing.delay()` for each. Use after a celery-side outage. Flags: `--dry-run`, `--form-type`, `--limit`, `--created-before`, `--reconstruct-links`, `--rate`. See `--help`. |
 | `reprocess_filings.py` | Re-runs the 8-K extractor against `processed=True` rows whose extraction columns are still empty (legacy / pre-extractor stubs). |
-| `update_floats.py` | Refreshes the share-float column on the ticker universe (~13h on Starter tier). |
+| `update_floats.py` | Refreshes the share-float column on the ticker universe (~13h on Starter tier). Same logic the Prefect flow uses; this is the manual trigger for ad-hoc backfills outside the Sunday 06:00 ET schedule. |
 | `seed_cik_universe.py` | Seeds / refreshes the CIK universe table from SEC company tickers JSON. |
 | `verify_setup.py` | Smoke-checks env vars, DB connectivity, broker config; `--strict` makes connection failures critical. |
+
+---
+
+## Operational Flows (Prefect)
+
+| Flow | Schedule | Purpose |
+|---|---|---|
+| `weekly-float-update` (`flows/float_update_flow.py`) | `0 6 * * 0` America/New_York (Sunday 06:00 ET) | Walks the active ticker universe, refreshes `float_shares` from Polygon, deactivates tickers >10M float or no longer listed. Sunday morning means the sweep finishes Sunday evening so data is fresh for Monday open. Each run writes a row to `flow_run_log` with status, summary, and (on failure) `error_message`. Manual ad-hoc invocation: `scripts/update_floats.py`. |
+| `outcome-resolution-flow` (`flows/outcome_resolution_flow.py`) | Hourly + 17:00 ET sweep | Closes matured predictions by fetching realized prices from Polygon and writing the outcome row. |
+
+`flow_run_log` is the source of truth for "did the flow run?" — query it directly:
+
+```sql
+SELECT flow_name, status, started_at, completed_at, summary
+FROM flow_run_log
+WHERE flow_name = 'weekly-float-update'
+ORDER BY started_at DESC
+LIMIT 10;
+```
 
 ---
 

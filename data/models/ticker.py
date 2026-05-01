@@ -21,6 +21,9 @@ class Ticker(Base):
         TIMESTAMP(timezone=True), server_default=func.now()
     )
     active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    float_updated_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True)
+    )
     notes: Mapped[str | None] = mapped_column(Text)
 
     def __repr__(self) -> str:

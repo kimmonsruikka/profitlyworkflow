@@ -79,6 +79,28 @@ The codebase is organized in thin layers: ingestion (EDGAR, Polygon, Benzinga, s
 - **`deploy/celery-worker.service` MUST keep its `Environment="PYTHONPATH=/app/profitlyworkflow"` line.** Celery's prefork *subprocess* workers don't inherit the unit's `WorkingDirectory` in a way Python uses for sys.path resolution, so without an explicit `PYTHONPATH` the task body's `from signals.engine import SignalEngine` (and any other project-package import) fails with `ModuleNotFoundError`. trading-app (uvicorn) and edgar-watcher (`python -m ...`) auto-add cwd to sys.path and are unaffected. A test in `tests/integration/test_systemd_units.py` pins this so a future refactor stripping the line surfaces in CI.
 - **Adding a new feature to `extract_edgar_features()` requires bumping `FEATURE_SCHEMA_VERSION` in `config/constants.py`.** Old predictions remain valid under their original schema; new predictions use the new version. The `FEATURE_KEYS_FV_V1` tuple in `signals/features/edgar_features.py` documents the contract — add to it AND bump the version together.
 - **`SIGNAL_TYPE_DEFAULTS` is a calibration target, not fixed truth.** Window/target values evolve as Phase 1 outcome data accumulates. Comment any change with the data that justified it; placeholders in this PR are explicitly so.
+- **Float refresh writes `tickers.float_updated_at` on every successful update.** `update_one_ticker()` in `ingestion/market_data/float_updater.py` sets the timestamp on `updated`, `deactivated_oversized`, and `deactivated_not_on_polygon` paths. Network/5xx errors deliberately leave it untouched so the next sweep retries. Never bulk-update `float_shares` without also updating `float_updated_at` — staleness tracking depends on it, and the universe sweep orders by `float_updated_at ASC NULLS FIRST` so a row that gets a fresh `float_shares` without a fresh timestamp will get re-fetched on every run.
+- **Tickers with `float_updated_at > 14 days old` should be considered stale for any feature-vector use.** The catalyst scorer should skip or downweight features derived from stale floats. (Implementation in the catalyst scorer is a follow-up; this rule documents the contract that downstream consumers must respect.)
+
+## Operational Flows
+
+| Flow | Schedule | Expected runtime | Recovery |
+|---|---|---|---|
+| `weekly-float-update` | Sunday 06:00 ET (`0 6 * * 0` America/New_York) | ~13–17h on Polygon Starter (5 req/min) for ~5,000 active tickers | Interrupted runs are self-healing — the next scheduled run picks up where it left off because `float_updated_at` ASC NULLS FIRST orders un-refreshed rows first. For ad-hoc backfill outside the schedule, run `scripts/update_floats.py` manually. |
+| `outcome-resolution-flow` | Hourly + 17:00 ET | Minutes | Idempotent; missed runs catch up on the next hour. |
+
+`flow_run_log` is the source of truth for "did the flow run last week?" — query the table directly:
+
+```sql
+SELECT flow_name, status, started_at, completed_at, summary
+FROM flow_run_log
+WHERE flow_name = 'weekly-float-update'
+ORDER BY started_at DESC LIMIT 10;
+```
+
+Follow-up queue:
+- Targeted float refresh on S-3 effective: when an S-3 effective filing fires for a ticker, immediately refresh that single ticker's float (one Polygon API call). Couples freshness to dilution events that actually matter for trading decisions. Out of scope for the initial automation PR; queued for after Phase 1a builds.
+- `flow_run_log` retention: rows accumulate forever. Add a 1-year retention sweep when volume becomes a problem. Currently a few rows per week.
 
 ## Key Files to Understand First
 

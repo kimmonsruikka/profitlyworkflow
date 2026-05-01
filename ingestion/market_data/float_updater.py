@@ -4,12 +4,21 @@ Phase 1 batch job. Walks the active universe, fetches ticker reference
 data, writes float_shares + shares_outstanding back to the tickers table,
 and deactivates rows whose float exceeds FLOAT_MAX or that Polygon doesn't
 recognize. Throttling is handled inside PolygonClient.
+
+Two layers:
+  - update_one_ticker(session, polygon, row) — operates on a single Ticker
+    row, returns a structured TickerUpdateResult. The script and the
+    Prefect flow both call this through update_floats_for_universe.
+  - update_floats_for_universe(session, polygon) — walks all active
+    rows oldest-stale-first (float_updated_at ASC NULLS FIRST) and
+    aggregates results into a FloatUpdateReport.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable
+from datetime import datetime, timezone
+from typing import Awaitable, Callable, Literal
 
 from loguru import logger
 from sqlalchemy import select
@@ -24,6 +33,25 @@ from ingestion.market_data.polygon_client import (
 
 
 ProgressCb = Callable[[int, int, str], None]
+
+
+TickerUpdateStatus = Literal[
+    "updated",
+    "deactivated_oversized",
+    "deactivated_not_on_polygon",
+    "error",
+]
+
+
+@dataclass(frozen=True)
+class TickerUpdateResult:
+    """Outcome of a single update_one_ticker call."""
+
+    status: TickerUpdateStatus
+    ticker_symbol: str
+    old_float: int | None = None
+    new_float: int | None = None
+    error: str | None = None
 
 
 @dataclass
@@ -45,10 +73,93 @@ class FloatUpdateReport:
             f"  errors (kept active for retry):                {self.errors}",
         ]
 
+    def as_dict(self) -> dict:
+        """Flat dict shape — used by the Prefect flow to write to flow_run_log."""
+        return {
+            "total": self.total,
+            "updated": self.updated,
+            "deactivated_oversized": self.deactivated_oversized,
+            "deactivated_not_found": self.deactivated_not_found,
+            "errors": self.errors,
+        }
+
 
 async def _load_active_tickers(session: AsyncSession) -> list[Ticker]:
-    stmt = select(Ticker).where(Ticker.active.is_(True)).order_by(Ticker.ticker)
+    """Active tickers ordered oldest-stale-first.
+
+    NULLS FIRST so brand-new and never-refreshed rows are touched
+    before slightly-stale ones. If a flow run is interrupted, the
+    next run picks up where it left off naturally — every row that
+    didn't get refreshed last time still has the older
+    float_updated_at value (or NULL).
+    """
+    stmt = (
+        select(Ticker)
+        .where(Ticker.active.is_(True))
+        .order_by(Ticker.float_updated_at.asc().nulls_first(), Ticker.ticker)
+    )
     return list((await session.execute(stmt)).scalars().all())
+
+
+async def update_one_ticker(
+    session: AsyncSession,
+    polygon: PolygonClient,
+    row: Ticker,
+) -> TickerUpdateResult:
+    """Refresh one ticker's float from Polygon and persist.
+
+    Mutates `row` in place; the caller's session must be open and is
+    responsible for the eventual flush/commit. Always sets
+    float_updated_at on success paths (updated, deactivated_oversized,
+    deactivated_not_on_polygon) so staleness tracking is honest.
+    Errors leave the row untouched so the next sweep retries.
+    """
+    old_float = row.float_shares
+    symbol = row.ticker
+    now = datetime.now(timezone.utc)
+
+    try:
+        details = await polygon.get_ticker_details(symbol)
+    except PolygonNotFoundError:
+        row.active = False
+        row.float_updated_at = now
+        return TickerUpdateResult(
+            status="deactivated_not_on_polygon",
+            ticker_symbol=symbol,
+            old_float=old_float,
+            new_float=None,
+        )
+    except Exception as exc:
+        # Network / 5xx — leave the row alone so the next run retries.
+        # We deliberately do NOT update float_updated_at here.
+        logger.exception("float update failed for {}", symbol)
+        return TickerUpdateResult(
+            status="error",
+            ticker_symbol=symbol,
+            old_float=old_float,
+            error=repr(exc),
+        )
+
+    new_float = details.get("float_shares")
+    row.float_shares = new_float
+    row.shares_outstanding = details.get("shares_outstanding")
+    row.float_updated_at = now
+
+    if new_float is not None and new_float > constants.FLOAT_MAX:
+        row.active = False
+        return TickerUpdateResult(
+            status="deactivated_oversized",
+            ticker_symbol=symbol,
+            old_float=old_float,
+            new_float=new_float,
+        )
+
+    return TickerUpdateResult(
+        status="updated",
+        ticker_symbol=symbol,
+        old_float=old_float,
+        new_float=new_float,
+    )
 
 
 async def update_floats_for_universe(
@@ -57,7 +168,7 @@ async def update_floats_for_universe(
     *,
     progress_callback: ProgressCb | None = None,
 ) -> FloatUpdateReport:
-    """Walk the active universe; update each row from Polygon.
+    """Walk the active universe oldest-stale-first; refresh each row.
 
     progress_callback receives (visited_count, total_count, last_ticker)
     so callers can stream progress. None disables progress output.
@@ -66,28 +177,17 @@ async def update_floats_for_universe(
     report = FloatUpdateReport(total=len(active))
 
     for idx, row in enumerate(active, start=1):
-        try:
-            details = await polygon.get_ticker_details(row.ticker)
-        except PolygonNotFoundError:
-            row.active = False
+        result = await update_one_ticker(session, polygon, row)
+        if result.status == "updated":
+            report.updated += 1
+        elif result.status == "deactivated_oversized":
+            report.deactivated_oversized += 1
+            report.oversized_tickers.append(result.ticker_symbol)
+        elif result.status == "deactivated_not_on_polygon":
             report.deactivated_not_found += 1
-            report.not_found_tickers.append(row.ticker)
-        except Exception:
-            # Network / 5xx — leave the row alone so the next run retries
-            logger.exception("float update failed for {}", row.ticker)
-            report.errors += 1
+            report.not_found_tickers.append(result.ticker_symbol)
         else:
-            float_shares = details.get("float_shares")
-            shares_outstanding = details.get("shares_outstanding")
-            row.float_shares = float_shares
-            row.shares_outstanding = shares_outstanding
-
-            if float_shares is not None and float_shares > constants.FLOAT_MAX:
-                row.active = False
-                report.deactivated_oversized += 1
-                report.oversized_tickers.append(row.ticker)
-            else:
-                report.updated += 1
+            report.errors += 1
 
         if progress_callback:
             progress_callback(idx, report.total, row.ticker)

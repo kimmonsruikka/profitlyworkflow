@@ -20,11 +20,14 @@ CREATE TABLE IF NOT EXISTS tickers (
     sector              VARCHAR(100),
     first_seen          TIMESTAMPTZ DEFAULT NOW(),
     active              BOOLEAN DEFAULT TRUE,
+    float_updated_at    TIMESTAMPTZ,
     notes               TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_tickers_cik     ON tickers(cik);
 CREATE INDEX IF NOT EXISTS idx_tickers_active  ON tickers(active);
+CREATE INDEX IF NOT EXISTS idx_tickers_float_updated_at
+    ON tickers(float_updated_at) WHERE active = TRUE;
 
 -- ---------------------------------------------------------------------------
 -- promoter_entities
@@ -347,3 +350,19 @@ CREATE TABLE IF NOT EXISTS outcomes (
 );
 
 CREATE INDEX IF NOT EXISTS idx_outcomes_label ON outcomes(outcome_label);
+
+-- ---------------------------------------------------------------------------
+-- flow_run_log — operational history for Prefect flows
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS flow_run_log (
+    flow_run_id   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    flow_name     VARCHAR(80) NOT NULL,
+    started_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    completed_at  TIMESTAMPTZ,
+    status        VARCHAR(20) NOT NULL,
+    summary       JSONB,
+    error_message TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_flow_run_log_name_started
+    ON flow_run_log(flow_name, started_at DESC);
