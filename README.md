@@ -650,6 +650,28 @@ profitlyworkflow/
 
 ---
 
+## Operational Scripts
+
+Manual recovery / maintenance tools live under `scripts/`. Run them on the droplet via `sudo -u trading` after sourcing `.env.production`:
+
+```bash
+sudo -u trading bash -c '
+    set -a; source /app/profitlyworkflow/.env.production; set +a
+    cd /app/profitlyworkflow
+    ./venv/bin/python scripts/<script>.py [flags]
+'
+```
+
+| Script | Purpose |
+|---|---|
+| `reprocess_unprocessed_filings.py` | Drains backlogs of `sec_filings` rows stuck at `processed=False` by re-dispatching `process_filing.delay()` for each. Use after a celery-side outage. Flags: `--dry-run`, `--form-type`, `--limit`, `--created-before`, `--reconstruct-links`, `--rate`. See `--help`. |
+| `reprocess_filings.py` | Re-runs the 8-K extractor against `processed=True` rows whose extraction columns are still empty (legacy / pre-extractor stubs). |
+| `update_floats.py` | Refreshes the share-float column on the ticker universe (~13h on Starter tier). |
+| `seed_cik_universe.py` | Seeds / refreshes the CIK universe table from SEC company tickers JSON. |
+| `verify_setup.py` | Smoke-checks env vars, DB connectivity, broker config; `--strict` makes connection failures critical. |
+
+---
+
 ## Environment Variables
 
 See `.env.example` for complete list. Three environment files, never committed:
