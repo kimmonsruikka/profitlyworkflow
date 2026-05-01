@@ -64,41 +64,19 @@ class PolygonClient:
         async with self._lock:
             now = time.monotonic()
             wait = self._min_interval - (now - self._last_request_at)
-            # DIAGNOSTIC: investigation of float_update_flow wedge — log every
-            # variable that goes into computing `wait` so we can see which
-            # hypothesis the math supports. To be removed once the root cause
-            # is identified.
-            logger.info(
-                "_throttle: wait={wait:.3f}s last_request_at={last:.3f} "
-                "now={now:.3f} interval={interval:.3f}",
-                wait=wait,
-                last=self._last_request_at,
-                now=now,
-                interval=self._min_interval,
-            )
             if wait > 0:
                 await asyncio.sleep(wait)
             self._last_request_at = time.monotonic()
-            logger.info(
-                "_throttle: resumed last_request_at={last:.3f}",
-                last=self._last_request_at,
-            )
 
     async def _call(self, fn, *args, **kwargs):
         await self._throttle()
-        # DIAGNOSTIC: log entry/exit of the SDK call so we can tell whether a
-        # hang is in the throttle's sleep or in to_thread / the underlying
-        # blocking HTTP call.
-        logger.info("_call: invoking SDK fn={name}", name=getattr(fn, "__name__", repr(fn)))
         try:
-            result = await asyncio.to_thread(fn, *args, **kwargs)
+            return await asyncio.to_thread(fn, *args, **kwargs)
         except Exception as exc:
             if _is_not_found(exc):
                 raise PolygonNotFoundError(str(exc)) from exc
             logger.exception("polygon call {} failed", fn.__name__)
             raise
-        logger.info("_call: SDK fn={name} returned", name=getattr(fn, "__name__", repr(fn)))
-        return result
 
     # -------------------- ticker reference --------------------
     async def get_ticker_details(self, ticker: str) -> dict[str, Any]:
