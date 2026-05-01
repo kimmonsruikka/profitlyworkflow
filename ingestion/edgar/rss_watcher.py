@@ -166,7 +166,15 @@ async def _ticker_for_ciks(
 
 
 async def persist_and_queue(session: AsyncSession, filings: list[dict]) -> int:
-    """Insert new filings and enqueue Celery tasks. Returns count enqueued."""
+    """Insert new filings and enqueue Celery tasks. Returns count enqueued.
+
+    The INSERT for each filing commits in its OWN session before the
+    Celery task is dispatched. Otherwise the worker's UPDATE — which
+    runs in a separate transaction (READ COMMITTED) — can't see the
+    watcher's uncommitted INSERT, returns rowcount=0, and `processed`
+    silently stays False. The outer `session` is still used for the
+    read-only universe/ticker lookups and the dedupe query.
+    """
     if not filings:
         return 0
     seen = await _existing_accessions(
@@ -204,7 +212,10 @@ async def persist_and_queue(session: AsyncSession, filings: list[dict]) -> int:
             )
             .on_conflict_do_nothing(index_elements=[SecFiling.accession_number])
         )
-        await session.execute(stmt)
+        # Per-filing session: commit BEFORE process_filing.delay so the
+        # worker's UPDATE finds the row. See docstring.
+        async with get_session() as insert_session:
+            await insert_session.execute(stmt)
 
         process_filing.delay({
             "accession_number": acc,
@@ -216,7 +227,6 @@ async def persist_and_queue(session: AsyncSession, filings: list[dict]) -> int:
         })
         queued += 1
 
-    await session.flush()
     return queued
 
 
@@ -395,21 +405,10 @@ async def _process_filing_async(payload: dict) -> dict:
                     }
     
             # Persist whatever we extracted.
-            # DIAGNOSTIC: temporary logging to investigate Bug B
-            logger.info(
-                "update_values pre-UPDATE for {acc}: {vals}",
-                acc=accession,
-                vals=update_values,
-            )
-            result = await session.execute(
+            await session.execute(
                 _update(SecFiling)
                 .where(SecFiling.accession_number == accession)
                 .values(**update_values)
-            )
-            logger.info(
-                "UPDATE rowcount for {acc}: {rc}",
-                acc=accession,
-                rc=result.rowcount,
             )
             # Signal evaluation snapshot — built inside this session so we
             # see the just-written values, but the eval itself runs in a
