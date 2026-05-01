@@ -188,6 +188,20 @@ POLYGON_REQUESTS_PER_MINUTE = 5
 POLYGON_HTTP_TIMEOUT_SECONDS = 30
 POLYGON_FLOAT_BATCH_PROGRESS_INTERVAL = 50  # report every N tickers in update_floats
 
+# How often update_floats_for_universe flushes the SQLAlchemy session
+# during the sweep. Without this, the flush only happens once at the
+# end of the loop — meaning tickers.float_updated_at writes aren't
+# visible to other transactions for the full ~17h sweep duration.
+# 25 keeps the visibility window to ~5 minutes (25 × 12.6s ≈ 5m15s)
+# while bounding the rollback blast radius if the flow crashes mid-run.
+FLOAT_UPDATE_FLUSH_INTERVAL = 25
+
+# Per-ticker progress logging cadence inside the Prefect flow. The
+# manual operator script uses POLYGON_FLOAT_BATCH_PROGRESS_INTERVAL
+# (50) — that's print() output for foreground runs. The flow logs to
+# journalctl / Prefect UI and a chattier cadence is fine there.
+FLOAT_UPDATE_FLOW_PROGRESS_INTERVAL = 10
+
 # Burst-rate cap for the cached price-source's get_ohlcv path. Coexists
 # with POLYGON_REQUESTS_PER_MINUTE — the per-minute throttle is still the
 # binding constraint on the Starter plan. This per-second value gates a

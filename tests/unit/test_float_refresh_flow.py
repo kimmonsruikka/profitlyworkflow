@@ -70,7 +70,7 @@ async def test_flow_writes_completed_log_row_on_success(flow_module, monkeypatch
         deactivated_not_found=1, errors=0,
     )
 
-    async def fake_run_float_update():
+    async def fake_run_float_update(progress_callback=None):
         return sample_report
 
     # The Prefect @task wraps _run_float_update — call its underlying fn
@@ -101,7 +101,7 @@ async def test_flow_writes_completed_log_row_on_success(flow_module, monkeypatch
 async def test_flow_writes_failed_log_row_on_exception(flow_module, monkeypatch):
     m, started, finished = flow_module
 
-    async def fake_run_float_update():
+    async def fake_run_float_update(progress_callback=None):
         raise RuntimeError("polygon down")
 
     monkeypatch.setattr(m, "_run_float_update", fake_run_float_update)
@@ -115,6 +115,33 @@ async def test_flow_writes_failed_log_row_on_exception(flow_module, monkeypatch)
     assert fin["status"] == "failed"
     assert "polygon down" in (fin["error_message"] or "")
     assert fin["summary"] is None
+
+
+def test_progress_logger_fires_every_n_tickers_and_on_last():
+    """Pin the cadence: log every FLOAT_UPDATE_FLOW_PROGRESS_INTERVAL
+    tickers AND on the last ticker so the operator sees a final
+    'sweep complete' line even if total isn't a clean multiple."""
+    from config import constants
+    from flows.float_update_flow import _make_flow_progress_logger
+
+    interval = constants.FLOAT_UPDATE_FLOW_PROGRESS_INTERVAL
+    assert interval == 10  # contract — change deliberately
+
+    captured: list[tuple] = []
+
+    class _FakeLogger:
+        def info(self, fmt, *args, **kwargs):
+            captured.append((fmt, args))
+
+    progress = _make_flow_progress_logger(_FakeLogger())
+
+    total = 23  # not a multiple of 10
+    for i in range(1, total + 1):
+        progress(i, total, f"T{i}")
+
+    # Should fire on i=10, 20, 23 (the last)
+    visited_indices = [args[0] for _, args in captured]
+    assert visited_indices == [10, 20, 23]
 
 
 @pytest.mark.asyncio

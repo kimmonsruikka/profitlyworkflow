@@ -141,6 +141,62 @@ async def test_universe_sweep_orders_oldest_first(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_universe_sweep_flushes_every_n_rows(monkeypatch):
+    """Per-batch flush keeps tickers.float_updated_at writes visible to
+    other transactions during the ~17h sweep — without it, the only
+    flush is at the end of the loop and the DB looks untouched. See
+    PR #26 investigation: the original 'wedge' report turned out to be
+    'flush only happens at the end so the DB shows zero progress.'"""
+    from config import constants
+
+    rows = [_make_ticker(f"T{i:04d}", float_shares=1_000_000) for i in range(70)]
+    monkeypatch.setattr(fu, "_load_active_tickers", AsyncMock(return_value=rows))
+
+    polygon = MagicMock()
+    polygon.get_ticker_details = AsyncMock(return_value={
+        "float_shares": 2_000_000,
+        "shares_outstanding": 2_000_000,
+    })
+
+    flush_calls: list[int] = []
+    counter = {"i": 0}
+
+    async def fake_flush():
+        flush_calls.append(counter["i"])
+
+    session = MagicMock()
+    session.flush = AsyncMock(side_effect=fake_flush)
+
+    async def driver():
+        # Re-implement the loop wrapper for the test so we can track
+        # which row we were on at each flush — the report itself
+        # doesn't expose that.
+        pass
+
+    # Wrap update_one_ticker to bump the counter so we can correlate
+    # flush calls to row indices.
+    real_update_one_ticker = fu.update_one_ticker
+
+    async def counting_update_one_ticker(s, p, r):
+        counter["i"] += 1
+        return await real_update_one_ticker(s, p, r)
+
+    monkeypatch.setattr(fu, "update_one_ticker", counting_update_one_ticker)
+
+    await fu.update_floats_for_universe(session, polygon)
+
+    # 70 rows with FLUSH_INTERVAL=25 → flushes at rows 25, 50, plus the
+    # final flush at end (after row 70). The end flush captures row 70.
+    flush_interval = constants.FLOAT_UPDATE_FLUSH_INTERVAL
+    assert flush_interval == 25  # pin the contract
+    # At least 3 flushes: two batch boundaries + end. Could be more if
+    # the count lines up with flush_interval exactly, e.g. 75 → 25/50/75/end.
+    assert len(flush_calls) >= 3
+    # The first batch flush should fire on or near row 25.
+    assert flush_calls[0] == flush_interval
+
+
+@pytest.mark.asyncio
 async def test_report_as_dict_shape():
     """flow_run_log.summary writes this dict — pin the keys."""
     report = fu.FloatUpdateReport(

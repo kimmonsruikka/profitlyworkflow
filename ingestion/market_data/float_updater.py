@@ -172,6 +172,11 @@ async def update_floats_for_universe(
 
     progress_callback receives (visited_count, total_count, last_ticker)
     so callers can stream progress. None disables progress output.
+
+    Flushes every FLOAT_UPDATE_FLUSH_INTERVAL rows so partial progress
+    is visible to other transactions during the (~17h) sweep — without
+    it, the only flush is at the end of the loop and the DB looks
+    untouched until the entire universe finishes.
     """
     active = await _load_active_tickers(session)
     report = FloatUpdateReport(total=len(active))
@@ -189,9 +194,13 @@ async def update_floats_for_universe(
         else:
             report.errors += 1
 
+        if idx % constants.FLOAT_UPDATE_FLUSH_INTERVAL == 0:
+            await session.flush()
+
         if progress_callback:
             progress_callback(idx, report.total, row.ticker)
 
+    # Final flush catches the last partial batch.
     await session.flush()
     logger.info("float update complete: {}", " | ".join(report.summary_lines()))
     return report
