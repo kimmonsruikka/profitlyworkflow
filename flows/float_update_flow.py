@@ -19,6 +19,8 @@ Deploy with (Prefect 3):
 
 from __future__ import annotations
 
+import asyncio
+import os
 import time
 import uuid
 from typing import Any
@@ -36,6 +38,23 @@ from ingestion.market_data.polygon_client import PolygonClient
 
 
 FLOW_NAME = "weekly-float-update"
+
+
+# Cancellation signal types — KeyboardInterrupt covers Ctrl+C, CancelledError
+# covers Prefect / asyncio cancellation. TerminationSignal exists in some
+# Prefect versions and is a CancelledError subclass; we add it to the tuple
+# only if importable so a Prefect upgrade renaming it doesn't break import.
+_CANCELLATION_EXCS: tuple[type[BaseException], ...]
+_cancellation_excs: list[type[BaseException]] = [
+    KeyboardInterrupt,
+    asyncio.CancelledError,
+]
+try:
+    from prefect.exceptions import TerminationSignal  # type: ignore[import-not-found]
+    _cancellation_excs.append(TerminationSignal)
+except ImportError:
+    pass
+_CANCELLATION_EXCS = tuple(_cancellation_excs)
 
 
 def _make_flow_progress_logger(prefect_logger):
@@ -95,24 +114,61 @@ async def _log_flow_finish(
         )
 
 
+def _log_flow_finish_sync(
+    flow_run_id: uuid.UUID,
+    *,
+    status: str,
+    error_message: str | None,
+) -> None:
+    """Cancellation-survivable counterpart to _log_flow_finish.
+
+    Awaiting an async DB call inside an except handler that's already
+    propagating CancelledError is a known asyncio footgun — the new
+    awaits get cancelled too, the row never gets written, and the
+    flow_run_log entry stays at status='running' forever. This sync
+    path uses psycopg2 directly with no event-loop dependency.
+
+    Deliberately minimal: one connect, one UPDATE, one commit, one
+    close. No pooling, no retries, no transaction abstraction. The
+    point is that this MUST run to completion under cancellation.
+    """
+    import psycopg2  # local import — only loaded when actually needed
+
+    conn = psycopg2.connect(os.environ["DATABASE_URL"])
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE flow_run_log SET status=%s, completed_at=NOW(), "
+                "error_message=%s WHERE flow_run_id=%s",
+                (status, error_message, str(flow_run_id)),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 @flow(name=FLOW_NAME)
 async def float_update_flow() -> dict:
     """Refresh float data for every active ticker.
 
     Returns the report as a dict so the Prefect UI shows the counts.
     """
-    # TODO(stale-flow-run): if this flow receives SIGTERM (Ctrl+C, agent
-    # restart, OOM), the flow_run_log row stays at status='running'
-    # forever — _log_flow_finish never runs. Wrap the body in
-    # try/except/finally that catches TerminationSignal / KeyboardInterrupt /
-    # asyncio.CancelledError and patches the row to status='cancelled'.
-    # Tracked separately; small follow-up PR.
     logger = get_run_logger()
     flow_run_id = await _log_flow_start()
     progress_cb = _make_flow_progress_logger(logger)
 
     try:
         report = await _run_float_update(progress_callback=progress_cb)
+    except _CANCELLATION_EXCS as exc:
+        # Cancellation path — async DB calls would themselves be cancelled
+        # mid-await, leaving the row at status='running'. Use the sync
+        # helper which doesn't depend on the event loop.
+        _log_flow_finish_sync(
+            flow_run_id,
+            status="cancelled",
+            error_message=f"{type(exc).__name__}: cancelled mid-run",
+        )
+        raise
     except Exception as exc:
         await _log_flow_finish(
             flow_run_id,
