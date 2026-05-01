@@ -72,6 +72,12 @@ async def float_update_flow() -> dict:
 
     Returns the report as a dict so the Prefect UI shows the counts.
     """
+    # TODO(stale-flow-run): if this flow receives SIGTERM (Ctrl+C, agent
+    # restart, OOM), the flow_run_log row stays at status='running'
+    # forever — _log_flow_finish never runs. Wrap the body in
+    # try/except/finally that catches TerminationSignal / KeyboardInterrupt /
+    # asyncio.CancelledError and patches the row to status='cancelled'.
+    # Tracked separately; small follow-up PR.
     logger = get_run_logger()
     flow_run_id = await _log_flow_start()
 
