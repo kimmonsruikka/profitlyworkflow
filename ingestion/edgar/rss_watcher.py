@@ -395,10 +395,21 @@ async def _process_filing_async(payload: dict) -> dict:
                     }
     
             # Persist whatever we extracted.
-            await session.execute(
+            # DIAGNOSTIC: temporary logging to investigate Bug B
+            logger.info(
+                "update_values pre-UPDATE for {acc}: {vals}",
+                acc=accession,
+                vals=update_values,
+            )
+            result = await session.execute(
                 _update(SecFiling)
                 .where(SecFiling.accession_number == accession)
                 .values(**update_values)
+            )
+            logger.info(
+                "UPDATE rowcount for {acc}: {rc}",
+                acc=accession,
+                rc=result.rowcount,
             )
             # Signal evaluation snapshot — built inside this session so we
             # see the just-written values, but the eval itself runs in a
