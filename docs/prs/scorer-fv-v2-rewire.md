@@ -1,7 +1,7 @@
 # Scorer FV-v2 Key Rewire — Design
 
 **Branch:** `hotfix/scorer-fv-v2-key-rewire`
-**Status:** Draft. No code yet. Awaiting design approval.
+**Status:** Design approved. Implementation in progress.
 **Predecessor:** PR #30 (investigation) — merged. Established that `_RULES_V1_WEIGHTS` keys and `FEATURE_KEYS_FV_V1` have zero overlap, zeroing every prediction's confidence.
 
 ---
@@ -30,7 +30,7 @@ For each `_RULES_V1_WEIGHTS` key. "Concept match" must be **literal** — same c
 |---|---|---|---|---|
 | `edgar_priority_form` | Filing's form type appears in `EDGAR_PRIORITY_FORMS` | `edgar_priority_form` | `filing.get("form_type") in EDGAR_PRIORITY_FORMS` | ✅ **Match** — same constant, same set membership test |
 | `ir_firm_engagement` | Parser detected an IR firm name in the filing body | `ir_firm_engaged` | `bool(filing.get("ir_firm_mentioned"))` | ✅ **Match** — both fire iff the parser wrote a non-empty `ir_firm_mentioned` |
-| `ir_firm_known_promoter` | The detected IR firm name matches a row in the promoter graph (narrow — IR-firm-specific, NOT general promoter match) | `ir_firm_known_promoter` | True iff `ticker_metadata["ir_firm_known_promoter"] is True`. Caller computes this by name-matching `ir_firm_mentioned` against `promoter_entities.name` and checking the matched entity's `type='ir_firm'`. Type-filter is essential — without it this would fire on any name-match including underwriters or attorneys | ⚠️ **Match IF caller filters by `promoter_entities.type='ir_firm'`**. Naively reusing FV-v1's `has_known_promoter_match` (which matches any promoter graph entity) **would broaden the concept and miscalibrate the weight**. Must be implemented as a separate, narrower lookup |
+| `ir_firm_known_promoter` | The detected IR firm name matches a row in the promoter graph (narrow — IR-firm-specific, NOT general promoter match) | `ir_firm_known_promoter` | True iff `ticker_metadata["ir_firm_known_promoter"] is True`. Caller computes this by name-matching `ir_firm_mentioned` against `promoter_entities.name` filtered to `type='ir_firm'`. Type-filter is essential — without it this would fire on any name-match including underwriters or attorneys | ✅ **Match — DECISION LOCKED.** Implemented as a narrow caller-side lookup with `promoter_entities.type='ir_firm'` filter. The broader FV-v1 `has_known_promoter_match` is NOT bridged in; it remains in the schema unchanged for downstream consumers, and the rules-v1 scorer reads the new narrow `ir_firm_known_promoter` key |
 | `underwriter_flagged` | The filing names an underwriter that's on a manipulation/flagged list | `underwriter_flagged` | True iff `ticker_metadata["underwriter_flagged"] is True`. Caller computes via `JOIN underwriters ON sec_filings.underwriter_id WHERE manipulation_flagged=TRUE` | ✅ **Match** — `underwriters.manipulation_flagged` is the exact list (populated by the underwriters-seeding job; the column exists with an index for this purpose). NOT "any underwriter present" — must check the flag |
 | `reverse_split_announced` | A reverse stock split was announced in the filing body | `reverse_split` | `bool(filing.get("full_text", {}).get("reverse_split"))` — non-null JSONB object means parser detected a ratio | ✅ **Match** — both fire iff the parser's `extract_reverse_split()` returned a dict |
 | `form4_insider_buy` | See Section D | See Section D | See Section D | See Section D |
@@ -45,7 +45,7 @@ For each `_RULES_V1_WEIGHTS` key. "Concept match" must be **literal** — same c
 
 ## C. Inert weight removal
 
-Two weights reference signals no extractor produces today:
+**DECISION LOCKED.** Drop both weights from `_RULES_V1_WEIGHTS` in this PR. They re-enter with semantic review when the upstream extractors land — keeping them as schema-stable zero-weight placeholders would obscure the fact that the supporting infrastructure doesn't exist yet.
 
 | Removed weight | Reason | Re-entry plan |
 |---|---|---|
@@ -61,22 +61,18 @@ Maximum possible score with current calibration: 0.85. (Pre-removal it was 1.00 
 
 ## D. Form4 buy semantics
 
+**DECISION LOCKED: P-only.** FV-v2's `is_form4_buy` fires on P-codes only, matching the original scorer comment and preserving its calibration intent. A-codes (grant/award acceptance) are NOT folded in. This narrows FV-v1's broader `is_form4_buy` (which accepted P+A) — that narrowing is exactly what the FV-v1 → FV-v2 schema bump exists to permit. Old FV-v1 predictions remain valid under their original schema; FV-v2 predictions use the narrower interpretation.
+
 | Source | What fires | Codes |
 |---|---|---|
 | Old scorer comment (`catalyst_scorer.py:87`) | "Form 4 P-code transaction" | P only |
 | FV-v1 extractor (`edgar_features.py:24`) | `_FORM4_BUY_CODES = frozenset({"P", "A"})` | P + A |
-| `sec_filings.form4_insider_buy` boolean (parser) | What the parser writes when it sees a buy | Need to check |
+| FV-v2 extractor (this PR) | `_FORM4_BUY_CODES = frozenset({"P"})` | **P only** |
+| `sec_filings.form4_insider_buy` boolean (parser) | What the parser writes when it sees a buy | Currently broader — see note below |
 
-The semantic question: does FV-v2's `form4_insider_buy` weight fire on P-only or P+A?
+**Implementation note:** the parser-stored `sec_filings.form4_insider_buy` boolean is set by the existing Form-4 path without P/A discrimination. To make FV-v2's P-only contract honest, the extractor MUST read the explicit `form4_transaction_code` field from the filing dict (which `_build_signal_payload` exposes — currently `None` because the parser doesn't yet populate it). The fallback path through the legacy `form4_insider_buy` boolean is removed in FV-v2 — without an explicit code, the flag is False. This means the flag fires only when the Form-4 extractor is enhanced to write the transaction code; until then, FV-v2 form-4 predictions land at score 0 for that signal. Acceptable: it's calibration-honest. The Form-4 extractor enhancement is its own follow-up PR.
 
-**Call: P+A** — accept the FV-v1 broader definition.
-
-**Reasoning:**
-1. The old "P-only" comment was aspirational, not enforced. The actual scorer fired on whatever the caller passed as `form4_insider_buy=True`. There was no P/A discrimination at the scorer layer — discrimination would have had to happen upstream in feature construction (which it didn't, because no FV-v1-aware caller existed).
-2. P (open-market purchase) and A (grant/award acceptance) are both directionally bullish from a "insider increased exposure" standpoint. The original P-only intent likely came from "open-market signals more conviction than awards." That distinction is real but is a *weight-tuning* concern, not a *what fires the flag* concern. Splitting them into two flags with different weights is a calibration question for the GBDT scorer downstream, not for rules-v1.
-3. Calibration is empirical. With placeholder weights, broader vs narrower flag definition matters only insofar as it changes the *count* of predictions, not the relative ordering. Until 500–1000 outcome pairs accumulate, the difference is noise.
-
-**This is the only semantic "broadening" in the PR.** Flagged here so reviewer can override if they want P-only purity.
+**Reasoning:** P (open-market purchase) signals more conviction than A (grant/award acceptance) — that distinction is the calibration intent the original scorer comment captured. Folding A-codes in (as FV-v1 did) silently broadens the signal and miscalibrates the weight. P-only matches the placeholder weight that's in `_RULES_V1_WEIGHTS` today.
 
 ---
 
@@ -128,8 +124,4 @@ The three pre-fix predictions remain in the table as historical artifacts of the
 
 ## Open items needing reviewer call
 
-1. **Section D form-4 broadening (P-only → P+A):** acceptable, or revert to P-only?
-2. **Section B `ir_firm_known_promoter` narrowing:** confirm the new caller-side lookup with `promoter_entities.type='ir_firm'` filter is the right semantic — not the broader FV-v1 `has_known_promoter_match`
-3. **Section C inert weight removal:** drop now (proposed) or keep them at 0 weight as schema-stable placeholders that re-light when the upstream extractors land?
-
-Once these three are confirmed, implementation is mechanical: rewire the keys, add the FV-v2 extractor outputs, bump the version constant, update tests.
+**All three resolved** — see Sections B, C, D above. Implementation proceeds.

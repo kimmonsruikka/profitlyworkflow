@@ -78,15 +78,26 @@ class CatalystScorer(abc.ABC):
 # Placeholder weights. The whole point of the predictions / outcomes loop
 # is to replace these with empirical values once we have the data. Don't
 # tune these by hand — that defeats the calibration design.
+#
+# Keys MUST match keys emitted by extract_edgar_features() under the current
+# FEATURE_SCHEMA_VERSION. PR #30 surfaced the bug where the two vocabularies
+# had drifted apart and every score landed at 0.0; PR #31 rewires the keys
+# to the FV-v2 vocabulary. Weight VALUES are unchanged from the original
+# placeholders — calibration is empirical and will replace them once 500-
+# 1000 outcome pairs accumulate.
+#
+# Two pre-PR-#31 weights (social_velocity_spike, short_interest_high) were
+# dropped because their upstream extractors don't exist yet (Phase 1.5 /
+# Phase 2). They re-enter with semantic review when those extractors land.
+# Maximum attainable score is now 0.85 instead of 1.00; _clamp_unit still
+# bounds output to [0, 1].
 _RULES_V1_WEIGHTS: dict[str, float] = {
     "edgar_priority_form": 0.20,        # filing matches EDGAR_PRIORITY_FORMS
-    "ir_firm_engagement": 0.15,         # filing parser detected an IR firm
-    "ir_firm_known_promoter": 0.20,     # the IR firm is in our promoter graph
-    "underwriter_flagged": 0.15,        # known-flagged underwriter on an S-1/S-3
-    "reverse_split_announced": 0.05,    # reverse split detected (mild signal)
-    "form4_insider_buy": 0.10,          # Form 4 P-code transaction
-    "social_velocity_spike": 0.10,      # Telegram/Reddit mention rate (Phase 1.5)
-    "short_interest_high": 0.05,        # SI% > 20 (Phase 2 once Ortex wired)
+    "ir_firm_engaged": 0.15,            # filing parser detected an IR firm
+    "ir_firm_known_promoter": 0.20,     # IR firm matches a type='ir_firm' promoter entity (narrow)
+    "underwriter_flagged": 0.15,        # underwriter on the manipulation_flagged list
+    "reverse_split": 0.05,              # parser extracted a reverse-split ratio
+    "is_form4_buy": 0.10,               # Form 4 P-code transaction (FV-v2 narrow)
 }
 
 

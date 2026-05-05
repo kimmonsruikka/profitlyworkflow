@@ -465,6 +465,7 @@ async def _build_signal_payload(
 
     from data.models.promoter_entity import PromoterEntity
     from data.models.ticker import Ticker
+    from data.models.underwriter import Underwriter
 
     ticker = update_values.get("ticker") or payload.get("ticker") or findings.get("ticker")
     cik = payload.get("cik")
@@ -484,21 +485,54 @@ async def _build_signal_payload(
         ).scalar_one_or_none()
 
     # Promoter-network match: how many entities match the ir_firm_mentioned
-    # text on this filing?
+    # text on this filing? (Broad — matches any promoter graph entity.)
     ir_firm = update_values.get("ir_firm_mentioned") or findings.get("ir_firm")
+    ir_firm_normalized = ir_firm.strip().lower() if ir_firm else None
     promoter_match_count = 0
-    if ir_firm:
+    if ir_firm_normalized:
         promoter_match_count = (
             await session.execute(
                 _select(_func.count())
                 .select_from(PromoterEntity)
-                .where(_func.lower(PromoterEntity.name) == ir_firm.strip().lower())
+                .where(_func.lower(PromoterEntity.name) == ir_firm_normalized)
             )
         ).scalar_one() or 0
 
-    # Underwriter match contributes to the count too.
-    if update_values.get("underwriter_id"):
+    # FV-v2 NARROW lookup: ir_firm_known_promoter requires the IR firm name
+    # to match a row with type='ir_firm' specifically. NOT the same as
+    # promoter_match_count (which fires on any type). Distinct because the
+    # rules-v1 weight was calibrated against the narrow signal.
+    ir_firm_known_promoter = False
+    if ir_firm_normalized:
+        ir_firm_known_promoter = bool(
+            (
+                await session.execute(
+                    _select(_func.count())
+                    .select_from(PromoterEntity)
+                    .where(_func.lower(PromoterEntity.name) == ir_firm_normalized)
+                    .where(PromoterEntity.type == "ir_firm")
+                )
+            ).scalar_one()
+        )
+
+    # Underwriter match contributes to the broad count too.
+    underwriter_id = update_values.get("underwriter_id")
+    if underwriter_id:
         promoter_match_count += 1
+
+    # FV-v2: underwriter_flagged requires JOIN to underwriters.manipulation_flagged.
+    # Fires only when the resolved underwriter is on the manipulation list,
+    # not just "any underwriter present."
+    underwriter_flagged = False
+    if underwriter_id:
+        underwriter_flagged = bool(
+            (
+                await session.execute(
+                    _select(Underwriter.manipulation_flagged)
+                    .where(Underwriter.underwriter_id == underwriter_id)
+                )
+            ).scalar_one_or_none()
+        )
 
     filing_view = {
         "ticker": ticker,
@@ -511,10 +545,16 @@ async def _build_signal_payload(
         "form4_insider_buy": bool(update_values.get("form4_insider_buy")),
         # form4_value_usd / form4_transaction_code aren't currently
         # populated by the parser; stay None until the Form-4 extractor
-        # is enhanced. Filter still gates on form4_insider_buy.
+        # is enhanced. FV-v2's _is_form4_buy reads form4_transaction_code
+        # explicitly — until the parser provides it, the FV-v2 form-4 buy
+        # flag stays False. Calibration-honest by design.
         "form4_value_usd": None,
         "form4_transaction_code": None,
-        "underwriter_id": update_values.get("underwriter_id"),
+        "underwriter_id": underwriter_id,
+        # Reverse-split data lives in full_text JSONB; FV-v2's _has_reverse_split
+        # reads full_text["reverse_split"]. Pass through whatever the parser
+        # wrote (empty dict if nothing).
+        "full_text": update_values.get("full_text") or {},
     }
     ticker_metadata = {
         "ticker": ticker,
@@ -525,6 +565,10 @@ async def _build_signal_payload(
         "promoter_match_reliability_scores": [],
         "days_since_last_filing": None,
         "days_since_last_promoter_filing": None,
+        # FV-v2 narrow-lookup booleans — caller-resolved so the extractor
+        # stays a pure function with no DB access.
+        "ir_firm_known_promoter": ir_firm_known_promoter,
+        "underwriter_flagged": underwriter_flagged,
     }
     return {"filing": filing_view, "ticker_metadata": ticker_metadata}
 

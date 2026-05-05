@@ -23,24 +23,27 @@ def test_score_result_probability_is_in_unit_interval_for_no_features():
 
 
 def test_score_result_probability_is_in_unit_interval_for_all_features():
+    """All FV-v2 weight keys set True. The two pre-PR-#31 inert weights
+    (social_velocity_spike, short_interest_high) were dropped — see the
+    rewire design doc Section C."""
     scorer = RulesV1Scorer()
     inputs = {
         "edgar_priority_form": True,
-        "ir_firm_engagement": True,
+        "ir_firm_engaged": True,
         "ir_firm_known_promoter": True,
         "underwriter_flagged": True,
-        "reverse_split_announced": True,
-        "form4_insider_buy": True,
-        "social_velocity_spike": True,
-        "short_interest_high": True,
+        "reverse_split": True,
+        "is_form4_buy": True,
     }
     out = scorer.score(inputs)
     assert 0.0 <= out.probability <= 1.0
+    # Sum of remaining weights = 0.85; clamp doesn't kick in.
+    assert out.probability == pytest.approx(0.85)
 
 
 def test_score_result_clamps_to_one_when_weights_overshoot():
-    """The placeholder weights total 1.0 — but a future weight bump or
-    bad config could overshoot. The scorer must clamp, not return >1."""
+    """Post-PR-#31 the placeholder weights total 0.85. A future weight
+    bump or bad config could overshoot; the scorer must still clamp."""
     from signals.scoring import catalyst_scorer as mod
 
     original = dict(mod._RULES_V1_WEIGHTS)
@@ -67,7 +70,7 @@ def test_score_result_echoes_input_features_in_feature_vector():
     scorer = RulesV1Scorer()
     inputs = {
         "edgar_priority_form": True,
-        "ir_firm_engagement": False,
+        "ir_firm_engaged": False,
         "extra_caller_provided_field": "promoter-X",  # extras must survive
     }
     out = scorer.score(inputs)
