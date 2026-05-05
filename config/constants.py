@@ -101,7 +101,10 @@ PDT_ROLLING_DAYS = 5
 # ---------------------------------------------------------------------------
 # Bumped whenever the prediction feature_vector definition changes. Old
 # rows stay valid under their original schema; new rows use the new version.
-FEATURE_SCHEMA_VERSION = "fv-v1"
+# v1 → v2 (PR #31): adds edgar_priority_form, ir_firm_engaged,
+# ir_firm_known_promoter, underwriter_flagged, reverse_split. Also narrows
+# is_form4_buy semantics from P+A to P-only.
+FEATURE_SCHEMA_VERSION = "fv-v2"
 
 # Thresholds the outcome-resolution flow applies after computing realized
 # return / hit_target / hit_stop. The resolution flow defers to these

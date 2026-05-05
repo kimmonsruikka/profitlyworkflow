@@ -81,17 +81,52 @@ def test_s3_not_effective_clears_flag():
 # ---------------------------------------------------------------------------
 # Form 4
 # ---------------------------------------------------------------------------
-def test_form4_insider_buy_bool_sets_flag():
+def test_form4_insider_buy_bool_alone_does_not_fire_in_fv_v2():
+    """FV-v2 narrowed is_form4_buy to require an explicit P-code. The
+    legacy form4_insider_buy boolean fallback was removed because the
+    parser sets that boolean without P/A discrimination — falling back
+    to it would silently broaden the signal back to FV-v1 semantics."""
     out = extract_edgar_features(
         _filing(form_type="4", form4_insider_buy=True), _meta(),
+    )
+    assert out["is_form4_buy"] is False
+
+
+def test_form4_p_code_fires_is_form4_buy():
+    """Explicit P-code (open-market purchase) is the only thing that
+    fires the FV-v2 form-4 buy flag."""
+    out = extract_edgar_features(
+        _filing(
+            form_type="4",
+            form4_insider_buy=True,
+            form4_transaction_code="P",
+        ),
+        _meta(),
     )
     assert out["is_form4_buy"] is True
 
 
+def test_form4_a_code_does_not_fire_is_form4_buy():
+    """A-code (grant/award) is excluded in FV-v2. This narrowing is the
+    calibration intent the schema bump exists to permit."""
+    out = extract_edgar_features(
+        _filing(
+            form_type="4",
+            form4_insider_buy=True,
+            form4_transaction_code="A",
+        ),
+        _meta(),
+    )
+    assert out["is_form4_buy"] is False
+
+
 def test_form4_value_computed_from_shares_times_price():
+    """form4_value_usd is gated on _is_form4_buy returning True — under
+    FV-v2 that requires the explicit P-code."""
     out = extract_edgar_features(
         _filing(
             form_type="4", form4_insider_buy=True,
+            form4_transaction_code="P",
             form4_shares=10_000, form4_price_per_share=4.25,
         ),
         _meta(),
