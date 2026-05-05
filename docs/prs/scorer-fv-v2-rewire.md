@@ -57,6 +57,8 @@ For each `_RULES_V1_WEIGHTS` key. "Concept match" must be **literal** — same c
 
 Maximum possible score with current calibration: 0.85. (Pre-removal it was 1.00 if all eight signals fired.) The `_clamp_unit` floor still bounds the output to `[0, 1]`. Calibration is empirical anyway — these weights are placeholders per `RulesV1Scorer` docstring — so the maximum-attainable being 0.85 instead of 1.00 doesn't change correctness, only theoretical headroom. Documented for honesty.
 
+**Phase 1b note — confidence-distribution ceiling.** rules-v1's max confidence is **0.85**, not 1.0. When confidence histograms are plotted for calibration analysis, do **not** rescale to [0, 1] for cross-scorer comparison. The 0.85 ceiling is a property of *this* scorer's weight space; rescaling would lie about the distribution shape. Cross-scorer comparison (e.g., rules-v1 vs the eventual GBDT) should treat each scorer's confidence on its own scale until the weight spaces are explicitly rebuilt to share a common ceiling.
+
 ---
 
 ## D. Form4 buy semantics
