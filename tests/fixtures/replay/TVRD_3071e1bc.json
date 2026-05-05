@@ -1,0 +1,36 @@
+{
+  "prediction_id": "5f4b799f-6d83-4be4-9aaf-439fec9e7aa5",
+  "prediction_ticker": "TVRD",
+  "prediction_signal_type": "S2_DILUTION_RISK",
+  "prediction_confidence_v1": 0.0,
+  "filing": {
+    "filing_id": "3071e1bc-bf27-4221-90ab-e827c86219d6",
+    "ticker": "TVRD",
+    "cik": "0001346830",
+    "form_type": "S-3",
+    "accession_number": "0001104659-26-054113",
+    "filed_at": "2026-05-01T20:05:29+00:00",
+    "item_numbers": [],
+    "ir_firm_mentioned": null,
+    "s3_effective": true,
+    "form4_insider_buy": false,
+    "form4_transaction_code": null,
+    "form4_value_usd": null,
+    "underwriter_id": null,
+    "full_text": {},
+    "processed": true,
+    "created_at": "2026-05-01T20:10:04.211382+00:00"
+  },
+  "ticker_metadata": {
+    "ticker": "TVRD",
+    "exchange": "Nasdaq",
+    "float_shares": 9381344,
+    "market_cap_usd": null,
+    "promoter_match_count": 0,
+    "promoter_match_reliability_scores": [],
+    "days_since_last_filing": null,
+    "days_since_last_promoter_filing": null,
+    "ir_firm_known_promoter": false,
+    "underwriter_flagged": false
+  }
+}
