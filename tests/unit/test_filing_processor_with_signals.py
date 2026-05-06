@@ -40,8 +40,11 @@ def _mock_session_with_lookup(*, ticker_row=None, promoter_count=0):
     """Return a session whose execute() yields canned ORM responses.
 
     Sequential calls return:
-      1. Ticker lookup (by ticker or cik) → ticker_row
-      2. Promoter-entity match count → promoter_count
+      1. CIK→ticker fallback lookup → [ticker_row] via .scalars().all()
+         (post-hotfix: .scalar_one_or_none() was replaced with explicit
+         0/1/>1 row handling to survive multi-ticker CIKs)
+      2. Ticker→ticker_row lookup → ticker_row via scalar_one_or_none
+      3+. Promoter / underwriter / etc. counts → promoter_count
     """
     session = MagicMock()
     call_count = {"n": 0}
@@ -49,15 +52,16 @@ def _mock_session_with_lookup(*, ticker_row=None, promoter_count=0):
     async def execute(_stmt):
         call_count["n"] += 1
         result = MagicMock()
-        if call_count["n"] == 1:
-            # First call: Ticker lookup. SQLAlchemy returns a Result whose
-            # scalar_one_or_none returns the ORM row (or None).
-            result.scalar_one_or_none = MagicMock(return_value=ticker_row)
-        else:
-            # Subsequent calls: count(*) — scalar_one returns the int
-            result.scalar_one = MagicMock(return_value=promoter_count)
-            # Also support scalar_one_or_none in case
-            result.scalar_one_or_none = MagicMock(return_value=ticker_row)
+        # Provide a .scalars().all() that returns [ticker_row] when one
+        # exists — supports the post-hotfix CIK-fallback shape.
+        scalars = MagicMock()
+        rows = [ticker_row] if ticker_row is not None else []
+        scalars.all = MagicMock(return_value=rows)
+        result.scalars = MagicMock(return_value=scalars)
+        # Also keep scalar_one_or_none / scalar_one populated for the
+        # secondary lookups downstream of the CIK fallback.
+        result.scalar_one_or_none = MagicMock(return_value=ticker_row)
+        result.scalar_one = MagicMock(return_value=promoter_count)
         return result
 
     session.execute = AsyncMock(side_effect=execute)

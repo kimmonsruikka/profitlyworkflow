@@ -219,6 +219,13 @@ async def persist_and_queue(session: AsyncSession, filings: list[dict]) -> int:
 
         process_filing.delay({
             "accession_number": acc,
+            # ticker is resolved here from the watcher's CIK→ticker map and
+            # stored on the sec_filings row (line above). It MUST also flow
+            # to the celery task — otherwise _process_filing_async hits the
+            # CIK fallback in _build_signal_payload, which crashes on
+            # multi-ticker CIKs (Freddie Mac, AGNC etc.). May be None when
+            # the CIK isn't in our universe; downstream handles that.
+            "ticker": ticker,
             "cik": f["cik"],
             "form_type": f["form_type"],
             "company_name": f.get("company_name"),
@@ -471,12 +478,39 @@ async def _build_signal_payload(
     cik = payload.get("cik")
 
     # Try to resolve ticker from cik if we don't have one yet.
+    #
+    # Many CIKs map to multiple tickers in production — Freddie Mac CIK has
+    # 23 (common + preferred series), AGNC has 3, etc. .scalar_one_or_none()
+    # would raise MultipleResultsFound on those and crash the entire celery
+    # task. .first() would silently pick one ticker and mis-attribute the
+    # signal to (e.g.) the preferred series instead of the common.
+    #
+    # Three explicit cases:
+    #   0 rows  → return None (no ticker resolvable; signal eval skipped)
+    #   1 row   → use it
+    #   >1 rows → log a warning and return None. The "right" ticker for an
+    #             issuer-level catalyst that affects both common and
+    #             preferred is a design conversation, not something this
+    #             function can guess. Treat as "skip signal evaluation"
+    #             until the design call is made.
     if not ticker and cik:
-        cik_row = (
-            await session.execute(_select(Ticker).where(Ticker.cik == cik))
-        ).scalar_one_or_none()
-        if cik_row:
-            ticker = cik_row.ticker
+        cik_rows = list(
+            (
+                await session.execute(
+                    _select(Ticker).where(Ticker.cik == cik)
+                )
+            ).scalars().all()
+        )
+        if len(cik_rows) == 1:
+            ticker = cik_rows[0].ticker
+        elif len(cik_rows) > 1:
+            logger.warning(
+                "cik_ambiguous_skip cik={cik} tickers={tickers}",
+                cik=cik,
+                tickers=[r.ticker for r in cik_rows],
+            )
+            # ticker stays None — function returns the snapshot with
+            # ticker=None and the signal engine skips evaluation.
 
     ticker_row = None
     if ticker:
