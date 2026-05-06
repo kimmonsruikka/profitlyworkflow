@@ -198,25 +198,26 @@ def test_calibration_low_n_below_threshold():
 
 
 def test_calibration_high_n_high_conf_wins():
-    """High-conf bucket has higher hit rate → spread is positive (+)."""
+    """High-conf bucket has higher hit rate → spread leads with positive sign.
+    Format: 'Calibration: +Zpp spread (last N) · high-conf X% (n=A) · low-conf Y% (n=B)'."""
     high = [m.OutcomePoint(0.6, True)] * 4 + [m.OutcomePoint(0.6, False)] * 1
     low = [m.OutcomePoint(0.2, True)] * 1 + [m.OutcomePoint(0.2, False)] * 4
     out = m.format_calibration_line(high + low)
     # 5 high (80% hit) + 5 low (20% hit) → spread +60pp
-    assert "high-conf hit rate 80%" in out
-    assert "low-conf hit rate 20%" in out
-    assert "spread: +60pp" in out
+    assert out.startswith("Calibration: +60pp spread (last 10) · ")
+    assert "high-conf 80% (n=5)" in out
+    assert "low-conf 20% (n=5)" in out
 
 
 def test_calibration_high_n_low_conf_wins():
-    """Low-conf bucket has higher hit rate → spread is negative (-).
+    """Low-conf bucket has higher hit rate → spread leads with negative sign.
     Sign must be explicit, not silently dropped."""
     high = [m.OutcomePoint(0.6, False)] * 4 + [m.OutcomePoint(0.6, True)] * 1
     low = [m.OutcomePoint(0.2, True)] * 4 + [m.OutcomePoint(0.2, False)] * 1
     out = m.format_calibration_line(high + low)
-    assert "high-conf hit rate 20%" in out
-    assert "low-conf hit rate 80%" in out
-    assert "spread: -60pp" in out
+    assert out.startswith("Calibration: -60pp spread (last 10) · ")
+    assert "high-conf 20% (n=5)" in out
+    assert "low-conf 80% (n=5)" in out
 
 
 def test_calibration_handles_median_tie_gracefully():

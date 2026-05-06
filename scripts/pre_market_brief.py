@@ -245,11 +245,12 @@ def format_calibration_line(outcomes: Sequence[OutcomePoint]) -> str:
     spread = high_rate - low_rate
     sign = "+" if spread >= 0 else "-"
 
+    # Spread leads — that's the headline number. The high/low breakdown
+    # follows for context.
     return (
-        f"Calibration (last {n} outcomes): "
-        f"high-conf hit rate {round(high_rate)}% (n={len(high)}), "
-        f"low-conf hit rate {round(low_rate)}% (n={len(low)}) · "
-        f"spread: {sign}{abs(round(spread))}pp"
+        f"Calibration: {sign}{abs(round(spread))}pp spread (last {n}) · "
+        f"high-conf {round(high_rate)}% (n={len(high)}) · "
+        f"low-conf {round(low_rate)}% (n={len(low)})"
     )
 
 
