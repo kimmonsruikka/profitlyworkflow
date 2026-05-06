@@ -190,7 +190,9 @@ async def test_celery_worker_inactive_fires_once(state_path):
     text = sent[0][2]
     assert "⚠ celery-worker not running" in text
     assert "Status: inactive" in text
-    assert "2026-05-06T11:14:23+0000" in text
+    # New format: relative time leads, absolute in parens.
+    # now_utc=12:00, last_seen=11:14:23 → 45 minutes ago.
+    assert "Last seen active: 45 minutes ago (2026-05-06 11:14:23 UTC)" in text
 
     # Second invocation: still inactive → suppress.
     sender2, sent2 = _telegram_collector()
@@ -223,6 +225,8 @@ async def test_edgar_watcher_inactive_fires(state_path):
     text = sent[0][2]
     assert "edgar-watcher not running" in text
     assert "Status: failed" in text
+    # now_utc=2026-05-06 12:00, last_seen=2026-05-05 22:11:00 → 13 hours ago.
+    assert "Last seen active: 13 hours ago (2026-05-05 22:11:00 UTC)" in text
 
 
 @pytest.mark.asyncio
@@ -514,6 +518,73 @@ def test_next_sunday_6am_et_from_sunday_after_six_picks_following_week():
     nxt = oa.next_sunday_6am_et(now)
     nxt_et = nxt.astimezone(oa.ZoneInfo("America/New_York"))
     assert nxt_et.date() == date(2026, 5, 17)
+
+
+@pytest.mark.parametrize(
+    "seconds,expected",
+    [
+        (0, "just now"),
+        (-5, "just now"),  # clamps negative to 0
+        (1, "1 second ago"),
+        (30, "30 seconds ago"),
+        (60, "1 minute ago"),
+        (120, "2 minutes ago"),
+        (3599, "59 minutes ago"),
+        (3600, "1 hour ago"),
+        (7200, "2 hours ago"),
+        (86399, "23 hours ago"),
+        (86400, "1 day ago"),
+        (172800, "2 days ago"),
+    ],
+)
+def test_format_relative_duration(seconds, expected):
+    assert oa.format_relative_duration(seconds) == expected
+
+
+def test_format_last_seen_line_with_valid_journalctl_timestamp():
+    now = datetime(2026, 5, 6, 12, 0, tzinfo=timezone.utc)
+    out = oa.format_last_seen_line("2026-05-06T11:14:23+0000", now)
+    assert out == "Last seen active: 45 minutes ago (2026-05-06 11:14:23 UTC)"
+
+
+def test_format_last_seen_line_unknown_falls_back():
+    now = datetime(2026, 5, 6, 12, 0, tzinfo=timezone.utc)
+    assert oa.format_last_seen_line("unknown", now) == "Last seen active: unknown"
+
+
+def test_format_last_seen_line_empty_falls_back():
+    now = datetime(2026, 5, 6, 12, 0, tzinfo=timezone.utc)
+    assert oa.format_last_seen_line("", now) == "Last seen active: unknown"
+
+
+def test_format_last_seen_line_unparseable_falls_back():
+    """Garbage input doesn't show a misleading 'X minutes ago' — show
+    the raw string so the operator can debug it."""
+    now = datetime(2026, 5, 6, 12, 0, tzinfo=timezone.utc)
+    out = oa.format_last_seen_line("not-a-timestamp", now)
+    assert out == "Last seen active: not-a-timestamp"
+
+
+@pytest.mark.asyncio
+async def test_celery_alert_with_unknown_last_seen(state_path):
+    """When journalctl can't tell us the last-active timestamp, the
+    alert MUST say 'unknown' rather than a misleading relative time."""
+    _seed_state(state_path, now_utc=datetime(2026, 5, 6, 12, 0, tzinfo=timezone.utc))
+    sender, sent = _telegram_collector()
+    await oa.run_alerter(
+        state_path=state_path,
+        now_utc=datetime(2026, 5, 6, 12, 0, tzinfo=timezone.utc),
+        telegram_sender=sender,
+        systemctl_runner=_systemctl_factory({"celery-worker": "inactive"}),
+        last_active_runner=_last_active_factory(),  # returns 'unknown'
+        journal_runner=_journal_factory(""),
+        db_session_factory=_db_factory(),
+        token="t", chat_id="c",
+    )
+    assert len(sent) == 1
+    text = sent[0][2]
+    assert "Last seen active: unknown" in text
+    assert " ago " not in text  # no misleading relative-time prefix
 
 
 def test_format_backlog_alert_shape():

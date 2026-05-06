@@ -266,19 +266,58 @@ def today_utc_iso(now_utc: datetime | None = None) -> str:
     return (now_utc or datetime.now(timezone.utc)).date().isoformat()
 
 
-def format_celery_alert(status: str, last_seen: str) -> str:
+def format_relative_duration(seconds: int) -> str:
+    """Human-readable 'X ago'. Always positive — clamps negative deltas to 0."""
+    if seconds <= 0:
+        return "just now"
+    if seconds < 60:
+        n, unit = seconds, "second"
+    elif seconds < 3600:
+        n, unit = seconds // 60, "minute"
+    elif seconds < 86400:
+        n, unit = seconds // 3600, "hour"
+    else:
+        n, unit = seconds // 86400, "day"
+    plural = "" if n == 1 else "s"
+    return f"{n} {unit}{plural} ago"
+
+
+def format_last_seen_line(last_seen: str, now_utc: datetime) -> str:
+    """Build the 'Last seen active: ...' line for liveness alerts.
+
+    On a parseable journalctl timestamp: relative time leads, absolute
+    timestamp in parens for context.
+    On 'unknown' / empty / unparseable: fall back to bare 'unknown'
+    rather than print a misleading number.
+    """
+    if not last_seen or last_seen == "unknown":
+        return "Last seen active: unknown"
+    try:
+        # journalctl short-iso emits e.g. '2026-05-06T11:14:23+0000'.
+        # %z accepts both +0000 and +00:00 on Python 3.11+.
+        ts = datetime.strptime(last_seen, "%Y-%m-%dT%H:%M:%S%z")
+    except ValueError:
+        return f"Last seen active: {last_seen}"
+    ts_utc = ts.astimezone(timezone.utc)
+    delta = int((now_utc - ts_utc).total_seconds())
+    rel = format_relative_duration(delta)
+    abs_str = ts_utc.strftime("%Y-%m-%d %H:%M:%S UTC")
+    return f"Last seen active: {rel} ({abs_str})"
+
+
+def format_celery_alert(status: str, last_seen_line: str) -> str:
     return (
         "⚠ celery-worker not running\n"
         f"Status: {status}\n"
-        f"Last seen active: {last_seen}"
+        f"{last_seen_line}"
     )
 
 
-def format_edgar_alert(status: str, last_seen: str) -> str:
+def format_edgar_alert(status: str, last_seen_line: str) -> str:
     return (
         "⚠ edgar-watcher not running\n"
         f"Status: {status}\n"
-        f"Last seen active: {last_seen}"
+        f"{last_seen_line}"
     )
 
 
@@ -415,21 +454,33 @@ async def evaluate_conditions(
     # --- 1. celery-worker
     status = systemctl_runner("celery-worker")
     breached = status != "active"
-    last_seen = last_active_runner("celery-worker") if breached else ""
+    if breached:
+        last_seen_line = format_last_seen_line(
+            last_active_runner("celery-worker"), now_utc,
+        )
+        alert_text = format_celery_alert(status, last_seen_line)
+    else:
+        alert_text = None
     results.append(CheckResult(
         name="celery_worker_alive",
         breached=breached,
-        alert_text=format_celery_alert(status, last_seen) if breached else None,
+        alert_text=alert_text,
     ))
 
     # --- 2. edgar-watcher
     status = systemctl_runner("edgar-watcher")
     breached = status != "active"
-    last_seen = last_active_runner("edgar-watcher") if breached else ""
+    if breached:
+        last_seen_line = format_last_seen_line(
+            last_active_runner("edgar-watcher"), now_utc,
+        )
+        alert_text = format_edgar_alert(status, last_seen_line)
+    else:
+        alert_text = None
     results.append(CheckResult(
         name="edgar_watcher_alive",
         breached=breached,
-        alert_text=format_edgar_alert(status, last_seen) if breached else None,
+        alert_text=alert_text,
     ))
 
     # --- 4. celery failure rate (parsed from journal — no DB needed)
